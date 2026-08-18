@@ -92,6 +92,7 @@ actor TransferEngine {
 
             switch destination {
             case .existing(let url):
+                try reveal(url)
                 do {
                     let deleted = try deleteOriginalIfRequested(file.url, request: request)
                     return TransferItemResult(
@@ -114,6 +115,7 @@ actor TransferEngine {
                     }
                 }
                 try fileManager.moveItem(at: temporary, to: url)
+                try reveal(url)
                 do {
                     let deleted = try deleteOriginalIfRequested(file.url, request: request)
                     return TransferItemResult(
@@ -129,6 +131,13 @@ actor TransferEngine {
         } catch {
             return failed(file, error: error)
         }
+    }
+
+    private func reveal(_ url: URL) throws {
+        var visibleURL = url
+        var values = URLResourceValues()
+        values.isHidden = false
+        try visibleURL.setResourceValues(values)
     }
 
     private enum DestinationChoice {

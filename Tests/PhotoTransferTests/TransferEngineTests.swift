@@ -86,6 +86,32 @@ struct TransferEngineTests {
         #expect(try Data(contentsOf: dated(raw).appending(path: "image.nef")) == Data("camera data".utf8))
     }
 
+    @Test("Clears a hidden flag inherited by a copied file")
+    func revealsCopiedFile() async throws {
+        let root = try TemporaryFolder()
+        let source = try root.folder("source")
+        let raw = try root.folder("raw")
+        let jpeg = try root.folder("jpeg")
+        var sourceFile = source.appending(path: "image.nef")
+        try Data("camera data".utf8).write(to: sourceFile)
+        var hiddenValues = URLResourceValues()
+        hiddenValues.isHidden = true
+        try sourceFile.setResourceValues(hiddenValues)
+
+        let result = await TransferEngine().transfer(request(
+            source: source,
+            file: sourceFile,
+            kind: .nef,
+            raw: raw,
+            jpeg: jpeg,
+            delete: false
+        ))
+
+        let destination = dated(raw).appending(path: "image.nef")
+        #expect(result.copiedCount == 1)
+        #expect(try destination.resourceValues(forKeys: [.isHiddenKey]).isHidden == false)
+    }
+
     @Test("Recognizes an identical destination and can clear the duplicate original")
     func handlesAlreadyPresentFile() async throws {
         let root = try TemporaryFolder()

@@ -59,7 +59,7 @@ zsh Scripts/notarize.sh
 2. Choose it under **Detected Devices**. If it is not listed, choose its `DCIM` folder manually.
 3. Choose separate destination folders for NEF and JPEG files.
 4. Decide whether movies and other files go to one of those destinations or are skipped.
-5. Scan and review the counts.
+5. Scan, then use the image tray to choose which shots to import. Matching NEF+JPEG pairs appear once and are always selected and transferred together.
 6. Transfer. If deletion is enabled, confirm the destructive step.
 
 Optionally enable **Unmount and eject card after successful transfer**. The app ejects only when every file operation succeeds; it deliberately leaves the card mounted if copying, verification, or original deletion reports an issue.

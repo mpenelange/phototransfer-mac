@@ -58,6 +58,73 @@ struct ScanResult: Sendable {
     static let empty = ScanResult(files: [], skippedFileCount: 0)
 }
 
+struct PhotoGroupID: Hashable, Sendable {
+    let directory: URL
+    let normalizedName: String
+    let category: String
+}
+
+struct PhotoGroup: Identifiable, Hashable, Sendable {
+    let id: PhotoGroupID
+    let files: [SourceFile]
+
+    var displayName: String {
+        guard let first = files.first else { return "Untitled" }
+        return if first.kind == .other {
+            first.url.lastPathComponent
+        } else {
+            first.url.deletingPathExtension().lastPathComponent
+        }
+    }
+
+    var previewURL: URL? {
+        files.first(where: { $0.kind == .jpeg })?.url
+            ?? files.first(where: { $0.kind == .nef })?.url
+            ?? files.first?.url
+    }
+
+    var typeLabel: String {
+        var labels: [String] = []
+        if files.contains(where: { $0.kind == .nef }) { labels.append("NEF") }
+        if files.contains(where: { $0.kind == .jpeg }) { labels.append("JPG") }
+        if let other = files.first(where: { $0.kind == .other }) {
+            let pathExtension = other.url.pathExtension.uppercased()
+            labels.append(pathExtension.isEmpty ? "FILE" : pathExtension)
+        }
+        return labels.joined(separator: " + ")
+    }
+
+    var totalByteCount: Int64 { files.reduce(0) { $0 + $1.byteCount } }
+}
+
+enum PhotoGrouping {
+    static func groups(for files: [SourceFile]) -> [PhotoGroup] {
+        Dictionary(grouping: files, by: groupID(for:))
+            .map { id, groupedFiles in
+                PhotoGroup(
+                    id: id,
+                    files: groupedFiles.sorted {
+                        $0.url.path.localizedStandardCompare($1.url.path) == .orderedAscending
+                    }
+                )
+            }
+            .sorted {
+                ($0.previewURL?.path ?? "").localizedStandardCompare($1.previewURL?.path ?? "") == .orderedAscending
+            }
+    }
+
+    private static func groupID(for file: SourceFile) -> PhotoGroupID {
+        let directory = file.url.deletingLastPathComponent().standardizedFileURL
+        let normalizedName = file.url.deletingPathExtension().lastPathComponent.lowercased()
+        let category = if file.kind == .other {
+            file.url.lastPathComponent.lowercased()
+        } else {
+            "photo"
+        }
+        return PhotoGroupID(directory: directory, normalizedName: normalizedName, category: category)
+    }
+}
+
 struct TransferRequest: Sendable {
     let sourceRoot: URL
     let files: [SourceFile]

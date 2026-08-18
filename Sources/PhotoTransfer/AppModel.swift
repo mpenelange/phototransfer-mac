@@ -26,6 +26,8 @@ final class AppModel {
     private(set) var backupDestinationGrant: FolderGrant?
     private(set) var mountedVolumes: [MountedVolume] = []
     private(set) var scanResult: ScanResult?
+    private(set) var photoGroups: [PhotoGroup] = []
+    private(set) var selectedPhotoGroupIDs: Set<PhotoGroupID> = []
     private(set) var transferProgress: TransferProgress?
     private(set) var transferSummary: TransferSummary?
     private(set) var isScanning = false
@@ -55,8 +57,8 @@ final class AppModel {
     var otherFilePolicy: OtherFilePolicy {
         didSet {
             defaults.set(otherFilePolicy.rawValue, forKey: DefaultsKey.otherFilePolicy)
-            scanResult = nil
-            transferSummary = nil
+            clearScan()
+            resetTransferState()
         }
     }
 
@@ -89,13 +91,19 @@ final class AppModel {
     var canEjectSource: Bool { sourceVolumeURL != nil }
     var canScan: Bool { sourceURL != nil && isBusy == false }
     var canTransfer: Bool {
-        guard let scanResult else { return false }
-        return scanResult.files.isEmpty == false
+        selectedFiles.isEmpty == false
             && nefDestinationURL != nil
             && jpegDestinationURL != nil
             && (backupEnabled == false || backupDestinationURL != nil)
             && isBusy == false
     }
+    var selectedPhotoCount: Int { selectedPhotoGroupIDs.count }
+    var selectedFiles: [SourceFile] {
+        photoGroups
+            .filter { selectedPhotoGroupIDs.contains($0.id) }
+            .flatMap(\.files)
+    }
+    var selectedByteCount: Int64 { selectedFiles.reduce(0) { $0 + $1.byteCount } }
 
     init() {
         deleteOriginals = defaults.bool(forKey: DefaultsKey.deleteOriginals)
@@ -163,9 +171,13 @@ final class AppModel {
         defer { isScanning = false }
 
         do {
-            scanResult = try await scanner.scan(source: sourceURL, otherFilePolicy: otherFilePolicy)
+            let result = try await scanner.scan(source: sourceURL, otherFilePolicy: otherFilePolicy)
+            let groups = PhotoGrouping.groups(for: result.files)
+            scanResult = result
+            photoGroups = groups
+            selectedPhotoGroupIDs = Set(groups.map(\.id))
         } catch {
-            scanResult = nil
+            clearScan()
             errorMessage = error.localizedDescription
         }
     }
@@ -174,8 +186,10 @@ final class AppModel {
         guard let sourceURL,
               let nefDestinationURL,
               let jpegDestinationURL,
-              let scanResult,
-              scanResult.files.isEmpty == false else { return }
+              scanResult != nil else { return }
+
+        let files = selectedFiles
+        guard files.isEmpty == false else { return }
 
         isTransferring = true
         errorMessage = nil
@@ -183,15 +197,15 @@ final class AppModel {
         ejectionState = .idle
         transferProgress = TransferProgress(
             completedCount: 0,
-            totalCount: scanResult.files.count,
+            totalCount: files.count,
             currentFileName: "Preparing…",
             copiedByteCount: 0,
-            totalByteCount: scanResult.totalByteCount
+            totalByteCount: selectedByteCount
         )
 
         let request = TransferRequest(
             sourceRoot: sourceURL,
-            files: scanResult.files,
+            files: files,
             nefDestination: nefDestinationURL,
             jpegDestination: jpegDestinationURL,
             backupDestination: backupEnabled ? backupDestinationURL : nil,
@@ -232,7 +246,30 @@ final class AppModel {
 
     private func setSource(_ url: URL) {
         sourceGrant = saveGrant(url, key: DefaultsKey.sourceBookmark)
-        scanResult = nil
+        clearScan()
+        resetTransferState()
+    }
+
+    func isSelected(_ group: PhotoGroup) -> Bool {
+        selectedPhotoGroupIDs.contains(group.id)
+    }
+
+    func setSelected(_ selected: Bool, for group: PhotoGroup) {
+        if selected {
+            selectedPhotoGroupIDs.insert(group.id)
+        } else {
+            selectedPhotoGroupIDs.remove(group.id)
+        }
+        resetTransferState()
+    }
+
+    func selectAllPhotos() {
+        selectedPhotoGroupIDs = Set(photoGroups.map(\.id))
+        resetTransferState()
+    }
+
+    func deselectAllPhotos() {
+        selectedPhotoGroupIDs.removeAll()
         resetTransferState()
     }
 
@@ -249,6 +286,12 @@ final class AppModel {
         transferProgress = nil
         transferSummary = nil
         ejectionState = .idle
+    }
+
+    private func clearScan() {
+        scanResult = nil
+        photoGroups = []
+        selectedPhotoGroupIDs = []
     }
 
     private func ejectSourceVolume() {

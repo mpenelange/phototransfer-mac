@@ -8,19 +8,29 @@ struct ContentView: View {
     @State private var confirmDeletion = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                header
-                sourceSection
-                destinationSection
-                optionsSection
-                scanSection
-                transferSection
+        HStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    header
+                    sourceSection
+                    destinationSection
+                    optionsSection
+                    scanSection
+                    transferSection
+                }
+                .padding(24)
+                .frame(maxWidth: 820)
+                .frame(maxWidth: .infinity)
             }
-            .padding(24)
-            .frame(maxWidth: 820)
-            .frame(maxWidth: .infinity)
+            .frame(minWidth: 650)
+
+            if model.photoGroups.isEmpty == false {
+                Divider()
+                PhotoSelectionTray(model: model)
+                    .frame(width: 330)
+            }
         }
+        .frame(minWidth: model.photoGroups.isEmpty ? 650 : 980)
         .navigationTitle("Photo Transfer")
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { model.refreshVolumes() }
@@ -204,8 +214,8 @@ struct ContentView: View {
                     .disabled(model.canScan == false)
 
                     Spacer()
-                    if let result = model.scanResult {
-                        Text("\(result.files.count) files · \(byteCount(result.totalByteCount))")
+                    if model.scanResult != nil {
+                        Text("\(model.selectedPhotoCount) selections · \(model.selectedFiles.count) files · \(byteCount(model.selectedByteCount))")
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -257,7 +267,7 @@ struct ContentView: View {
                 }
             } label: {
                 Label(
-                    model.deleteOriginals ? "Transfer, Verify, and Delete" : "Transfer Photos",
+                    transferButtonLabel,
                     systemImage: model.deleteOriginals ? "arrow.right.circle.fill" : "square.and.arrow.down.fill"
                 )
                 .frame(maxWidth: .infinity)
@@ -309,6 +319,15 @@ struct ContentView: View {
             "Each original will be deleted only after both its primary and backup copies pass SHA-256 verification. Failed files stay on the source."
         } else {
             "Each original will be deleted only after its destination copy passes SHA-256 verification. Failed files stay on the source."
+        }
+    }
+
+    private var transferButtonLabel: String {
+        let action = model.deleteOriginals ? "Transfer, Verify, and Delete" : "Transfer"
+        return if model.selectedPhotoCount == 1 {
+            "\(action) 1 Selection"
+        } else {
+            "\(action) \(model.selectedPhotoCount) Selections"
         }
     }
 

@@ -5,7 +5,7 @@ Version 1.1 expands the safe transfer core toward the most useful parts of Nikon
 ## Milestones
 
 1. **Verified secondary backup** — optionally copy every imported file to a second dated destination. Both copies must verify before an original can be deleted.
-2. **Thumbnail review and selection** — show scanned photos, keep RAW+JPEG pairs together, and transfer only selected items.
+2. **Thumbnail review and selection** — show scanned photos in a right-hand tray, keep RAW+JPEG pairs together, and transfer only selected items. *(Implemented)*
 3. **Import history** — remember successfully imported media and offer a “new files only” workflow without relying only on filenames.
 4. **Naming and folder templates** — configurable date, camera, sequence, and original-name tokens with a preview before transfer.
 5. **Transfer report and retry** — durable per-file results, a retry-failed action, and an exportable log.

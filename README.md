@@ -6,6 +6,8 @@ The v1.1 branch adds an optional second destination for verified backup copies. 
 
 The app icon depicts an SD card splitting an import into two destination folders. Its complete macOS icon set lives in `Sources/PhotoTransfer/Resources/Assets.xcassets`.
 
+Version 1.0.1 ensures imported files are visible in Finder, including on SMB destinations that map dot-prefixed staging files to a persistent hidden attribute.
+
 ## Run it
 
 Requirements: macOS 14 or later and Xcode 16 or later.

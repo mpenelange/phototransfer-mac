@@ -8,6 +8,8 @@ final class AppModel {
         static let sourceBookmark = "sourceBookmark"
         static let nefDestinationBookmark = "nefDestinationBookmark"
         static let jpegDestinationBookmark = "jpegDestinationBookmark"
+        static let backupDestinationBookmark = "backupDestinationBookmark"
+        static let backupEnabled = "backupEnabled"
         static let deleteOriginals = "deleteOriginals"
         static let verifyCopies = "verifyCopies"
         static let otherFilePolicy = "otherFilePolicy"
@@ -21,6 +23,7 @@ final class AppModel {
     private(set) var sourceGrant: FolderGrant?
     private(set) var nefDestinationGrant: FolderGrant?
     private(set) var jpegDestinationGrant: FolderGrant?
+    private(set) var backupDestinationGrant: FolderGrant?
     private(set) var mountedVolumes: [MountedVolume] = []
     private(set) var scanResult: ScanResult?
     private(set) var transferProgress: TransferProgress?
@@ -41,6 +44,14 @@ final class AppModel {
         didSet { defaults.set(verifyCopies, forKey: DefaultsKey.verifyCopies) }
     }
 
+    var backupEnabled: Bool {
+        didSet {
+            defaults.set(backupEnabled, forKey: DefaultsKey.backupEnabled)
+            if backupEnabled { verifyCopies = true }
+            resetTransferState()
+        }
+    }
+
     var otherFilePolicy: OtherFilePolicy {
         didSet {
             defaults.set(otherFilePolicy.rawValue, forKey: DefaultsKey.otherFilePolicy)
@@ -56,12 +67,16 @@ final class AppModel {
     var sourceURL: URL? { sourceGrant?.url }
     var nefDestinationURL: URL? { nefDestinationGrant?.url }
     var jpegDestinationURL: URL? { jpegDestinationGrant?.url }
+    var backupDestinationURL: URL? { backupDestinationGrant?.url }
     var importFolderName: String { ImportFolderNaming.folderName() }
     var effectiveNEFDestinationURL: URL? {
         nefDestinationURL?.appending(path: importFolderName, directoryHint: .isDirectory)
     }
     var effectiveJPEGDestinationURL: URL? {
         jpegDestinationURL?.appending(path: importFolderName, directoryHint: .isDirectory)
+    }
+    var effectiveBackupDestinationURL: URL? {
+        backupDestinationURL?.appending(path: importFolderName, directoryHint: .isDirectory)
     }
     var isBusy: Bool { isScanning || isTransferring }
     var sourceVolumeURL: URL? {
@@ -78,18 +93,22 @@ final class AppModel {
         return scanResult.files.isEmpty == false
             && nefDestinationURL != nil
             && jpegDestinationURL != nil
+            && (backupEnabled == false || backupDestinationURL != nil)
             && isBusy == false
     }
 
     init() {
         deleteOriginals = defaults.bool(forKey: DefaultsKey.deleteOriginals)
         verifyCopies = defaults.object(forKey: DefaultsKey.verifyCopies) as? Bool ?? true
+        backupEnabled = defaults.bool(forKey: DefaultsKey.backupEnabled)
         otherFilePolicy = defaults.string(forKey: DefaultsKey.otherFilePolicy)
             .flatMap(OtherFilePolicy.init(rawValue:)) ?? .jpegDestination
         ejectAfterTransfer = defaults.bool(forKey: DefaultsKey.ejectAfterTransfer)
         sourceGrant = FolderAccessStore.restore(key: DefaultsKey.sourceBookmark)
         nefDestinationGrant = FolderAccessStore.restore(key: DefaultsKey.nefDestinationBookmark)
         jpegDestinationGrant = FolderAccessStore.restore(key: DefaultsKey.jpegDestinationBookmark)
+        backupDestinationGrant = FolderAccessStore.restore(key: DefaultsKey.backupDestinationBookmark)
+        if deleteOriginals || backupEnabled { verifyCopies = true }
         refreshVolumes()
     }
 
@@ -124,6 +143,15 @@ final class AppModel {
             initialURL: jpegDestinationURL
         ) else { return }
         jpegDestinationGrant = saveGrant(url, key: DefaultsKey.jpegDestinationBookmark)
+        resetTransferState()
+    }
+
+    func chooseBackupDestination() {
+        guard let url = FolderAccessStore.chooseFolder(
+            message: "Choose where verified backup copies should be saved",
+            initialURL: backupDestinationURL
+        ) else { return }
+        backupDestinationGrant = saveGrant(url, key: DefaultsKey.backupDestinationBookmark)
         resetTransferState()
     }
 
@@ -166,6 +194,7 @@ final class AppModel {
             files: scanResult.files,
             nefDestination: nefDestinationURL,
             jpegDestination: jpegDestinationURL,
+            backupDestination: backupEnabled ? backupDestinationURL : nil,
             importFolderName: importFolderName,
             otherFilePolicy: otherFilePolicy,
             deleteOriginals: deleteOriginals,
@@ -186,13 +215,16 @@ final class AppModel {
             }
         }
         isTransferring = false
-        if summary.failedCount > 0 || summary.cleanupFailedCount > 0 {
+        if summary.failedCount > 0 || summary.backupFailedCount > 0 || summary.cleanupFailedCount > 0 {
             var details: [String] = []
             if summary.failedCount > 0 {
                 details.append("\(summary.failedCount) file(s) could not be transferred")
             }
             if summary.cleanupFailedCount > 0 {
                 details.append("\(summary.cleanupFailedCount) copied original(s) could not be deleted")
+            }
+            if summary.backupFailedCount > 0 {
+                details.append("\(summary.backupFailedCount) file(s) could not be backed up; originals were kept")
             }
             errorMessage = details.joined(separator: "; ") + "."
         }

@@ -63,6 +63,7 @@ struct TransferRequest: Sendable {
     let files: [SourceFile]
     let nefDestination: URL
     let jpegDestination: URL
+    let backupDestination: URL?
     let importFolderName: String
     let otherFilePolicy: OtherFilePolicy
     let deleteOriginals: Bool
@@ -85,6 +86,7 @@ enum TransferOutcome: Sendable {
     case copied
     case alreadyPresent
     case skipped
+    case backupFailed(String, primaryAlreadyPresent: Bool)
     case cleanupFailed(String, alreadyPresent: Bool)
     case failed(String)
 }
@@ -92,6 +94,7 @@ enum TransferOutcome: Sendable {
 struct TransferItemResult: Sendable {
     let source: URL
     let destination: URL?
+    let backupDestination: URL?
     let outcome: TransferOutcome
     let originalDeleted: Bool
 }
@@ -111,7 +114,9 @@ struct TransferSummary: Sendable {
     var copiedCount: Int {
         results.count(where: {
             switch $0.outcome {
-            case .copied, .cleanupFailed(_, alreadyPresent: false): true
+            case .copied,
+                 .backupFailed(_, primaryAlreadyPresent: false),
+                 .cleanupFailed(_, alreadyPresent: false): true
             default: false
             }
         })
@@ -119,20 +124,28 @@ struct TransferSummary: Sendable {
     var alreadyPresentCount: Int {
         results.count(where: {
             switch $0.outcome {
-            case .alreadyPresent, .cleanupFailed(_, alreadyPresent: true): true
+            case .alreadyPresent,
+                 .backupFailed(_, primaryAlreadyPresent: true),
+                 .cleanupFailed(_, alreadyPresent: true): true
             default: false
             }
         })
+    }
+    var backupCopiedCount: Int { results.count(where: { $0.backupDestination != nil }) }
+    var backupFailedCount: Int {
+        results.count(where: { if case .backupFailed = $0.outcome { true } else { false } })
     }
     var skippedCount: Int { results.count(where: { if case .skipped = $0.outcome { true } else { false } }) }
     var failedCount: Int { results.count(where: { if case .failed = $0.outcome { true } else { false } }) }
     var cleanupFailedCount: Int { results.count(where: { if case .cleanupFailed = $0.outcome { true } else { false } }) }
     var deletedCount: Int { results.count(where: \.originalDeleted) }
-    var isFullySuccessful: Bool { failedCount == 0 && cleanupFailedCount == 0 }
+    var isFullySuccessful: Bool {
+        failedCount == 0 && backupFailedCount == 0 && cleanupFailedCount == 0
+    }
     var failures: [TransferItemResult] {
         results.filter {
             switch $0.outcome {
-            case .failed, .cleanupFailed: true
+            case .failed, .backupFailed, .cleanupFailed: true
             default: false
             }
         }

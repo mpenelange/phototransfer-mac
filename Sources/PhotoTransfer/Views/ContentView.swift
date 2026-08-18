@@ -46,7 +46,7 @@ struct ContentView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Each original will be deleted only after its destination copy passes SHA-256 verification. Failed files stay on the source.")
+            Text(deletionConfirmationMessage)
         }
     }
 
@@ -123,6 +123,23 @@ struct ContentView: View {
                     url: model.effectiveJPEGDestinationURL,
                     choose: model.chooseJPEGDestination
                 )
+                Divider()
+                Toggle("Create a verified backup copy", isOn: $model.backupEnabled)
+                if model.backupEnabled {
+                    DestinationRow(
+                        label: "Backup (all files)",
+                        icon: "externaldrive.badge.checkmark",
+                        tint: .blue,
+                        url: model.effectiveBackupDestinationURL,
+                        choose: model.chooseBackupDestination
+                    )
+                    Label(
+                        "Originals are kept unless both the primary and backup copies verify successfully.",
+                        systemImage: "checkmark.shield"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
                 Label(
                     "This import will be stored in a \(model.importFolderName) subfolder.",
                     systemImage: "calendar"
@@ -287,6 +304,14 @@ struct ContentView: View {
         )
     }
 
+    private var deletionConfirmationMessage: String {
+        if model.backupEnabled {
+            "Each original will be deleted only after both its primary and backup copies pass SHA-256 verification. Failed files stay on the source."
+        } else {
+            "Each original will be deleted only after its destination copy passes SHA-256 verification. Failed files stay on the source."
+        }
+    }
+
     private func byteCount(_ count: Int64) -> String {
         count.formatted(.byteCount(style: .file))
     }
@@ -381,12 +406,14 @@ private struct TransferSummaryView: View {
         var parts = ["\(summary.copiedCount) copied"]
         if summary.alreadyPresentCount > 0 { parts.append("\(summary.alreadyPresentCount) already present") }
         if summary.deletedCount > 0 { parts.append("\(summary.deletedCount) originals deleted") }
+        if summary.backupCopiedCount > 0 { parts.append("\(summary.backupCopiedCount) backed up") }
+        if summary.backupFailedCount > 0 { parts.append("\(summary.backupFailedCount) backup failed") }
         if summary.cleanupFailedCount > 0 { parts.append("\(summary.cleanupFailedCount) originals kept") }
         if summary.failedCount > 0 { parts.append("\(summary.failedCount) failed") }
         return parts.joined(separator: " · ")
     }
 
     private var hasIssues: Bool {
-        summary.failedCount > 0 || summary.cleanupFailedCount > 0
+        summary.failedCount > 0 || summary.backupFailedCount > 0 || summary.cleanupFailedCount > 0
     }
 }

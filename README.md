@@ -2,6 +2,8 @@
 
 A small native macOS app for safely importing camera files. It scans an SD card or mounted camera volume, sends Nikon NEF and JPEG files to separate folders, verifies every copy, and can then remove the verified originals.
 
+The v1.1 branch adds an optional second destination for verified backup copies. When backup and deletion are both enabled, a source file is deleted only after its primary and backup copies have each passed verification.
+
 The app icon depicts an SD card splitting an import into two destination folders. Its complete macOS icon set lives in `Sources/PhotoTransfer/Resources/Assets.xcassets`.
 
 ## Run it

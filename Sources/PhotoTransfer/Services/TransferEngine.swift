@@ -4,6 +4,7 @@ import Foundation
 actor TransferEngine {
     enum TransferError: LocalizedError {
         case sourceAndDestinationOverlap
+        case backupAndPrimaryDestinationOverlap
         case destinationUnavailable(String)
         case sourceUnavailable(String)
         case verificationFailed(String)
@@ -12,6 +13,8 @@ actor TransferEngine {
             switch self {
             case .sourceAndDestinationOverlap:
                 "The source and destination folders must not contain one another."
+            case .backupAndPrimaryDestinationOverlap:
+                "The backup destination must be separate from the NEF and JPEG destinations."
             case .destinationUnavailable(let path):
                 "The destination is unavailable: \(path)"
             case .sourceUnavailable(let path):
@@ -38,12 +41,16 @@ actor TransferEngine {
             try validate(request)
             try ensureDestination(importDestination(request.nefDestination, request: request))
             try ensureDestination(importDestination(request.jpegDestination, request: request))
+            if let backupDestination = request.backupDestination {
+                try ensureDestination(importDestination(backupDestination, request: request))
+            }
         } catch {
             return TransferSummary(
                 results: request.files.map {
                     TransferItemResult(
                         source: $0.url,
                         destination: nil,
+                        backupDestination: nil,
                         outcome: .failed(error.localizedDescription),
                         originalDeleted: false
                     )
@@ -59,8 +66,11 @@ actor TransferEngine {
         for (index, file) in request.files.enumerated() {
             let result = transfer(file, request: request)
             results.append(result)
-            if case .copied = result.outcome {
+            switch result.outcome {
+            case .copied, .backupFailed(_, primaryAlreadyPresent: false):
                 copiedBytes += file.byteCount
+            default:
+                break
             }
             await progress?(TransferProgress(
                 completedCount: index + 1,
@@ -80,55 +90,100 @@ actor TransferEngine {
         }
 
         guard let destinationRoot = destination(for: file.kind, request: request) else {
-            return TransferItemResult(source: file.url, destination: nil, outcome: .skipped, originalDeleted: false)
+            return TransferItemResult(
+                source: file.url,
+                destination: nil,
+                backupDestination: nil,
+                outcome: .skipped,
+                originalDeleted: false
+            )
         }
 
         do {
-            let destination = try availableDestination(
-                for: file.url,
-                in: destinationRoot,
-                verify: request.verifyCopies
+            let primary = try copy(
+                file.url,
+                to: destinationRoot,
+                verify: request.verifyCopies || request.deleteOriginals || request.backupDestination != nil
             )
 
-            switch destination {
-            case .existing(let url):
+            var backupURL: URL?
+            if let backupRoot = request.backupDestination {
                 do {
-                    let deleted = try deleteOriginalIfRequested(file.url, request: request)
+                    let backup = try copy(
+                        file.url,
+                        to: importDestination(backupRoot, request: request),
+                        verify: true
+                    )
+                    backupURL = backup.url
+                } catch {
                     return TransferItemResult(
                         source: file.url,
-                        destination: url,
-                        outcome: .alreadyPresent,
-                        originalDeleted: deleted
+                        destination: primary.url,
+                        backupDestination: nil,
+                        outcome: .backupFailed(
+                            "The primary copy is safe, but its backup failed: \(error.localizedDescription)",
+                            primaryAlreadyPresent: primary.alreadyPresent
+                        ),
+                        originalDeleted: false
                     )
-                } catch {
-                    return cleanupFailed(file, destination: url, error: error, alreadyPresent: true)
                 }
+            }
 
-            case .new(let url):
-                let temporary = temporaryURL(for: url)
-                defer { try? fileManager.removeItem(at: temporary) }
-                try fileManager.copyItem(at: file.url, to: temporary)
-                if request.verifyCopies {
-                    guard try filesMatch(file.url, temporary) else {
-                        throw TransferError.verificationFailed(file.url.lastPathComponent)
-                    }
-                }
-                try fileManager.moveItem(at: temporary, to: url)
-                do {
-                    let deleted = try deleteOriginalIfRequested(file.url, request: request)
-                    return TransferItemResult(
-                        source: file.url,
-                        destination: url,
-                        outcome: .copied,
-                        originalDeleted: deleted
-                    )
-                } catch {
-                    return cleanupFailed(file, destination: url, error: error, alreadyPresent: false)
-                }
+            do {
+                let deleted = try deleteOriginalIfRequested(file.url, request: request)
+                return TransferItemResult(
+                    source: file.url,
+                    destination: primary.url,
+                    backupDestination: backupURL,
+                    outcome: primary.alreadyPresent ? .alreadyPresent : .copied,
+                    originalDeleted: deleted
+                )
+            } catch {
+                return cleanupFailed(
+                    file,
+                    destination: primary.url,
+                    backupDestination: backupURL,
+                    error: error,
+                    alreadyPresent: primary.alreadyPresent
+                )
             }
         } catch {
             return failed(file, error: error)
         }
+    }
+
+    private struct CompletedCopy {
+        let url: URL
+        let alreadyPresent: Bool
+    }
+
+    private func copy(_ source: URL, to root: URL, verify: Bool) throws -> CompletedCopy {
+        let destination = try availableDestination(for: source, in: root, verify: verify)
+
+        switch destination {
+        case .existing(let url):
+            try reveal(url)
+            return CompletedCopy(url: url, alreadyPresent: true)
+        case .new(let url):
+            let temporary = temporaryURL(for: url)
+            defer { try? fileManager.removeItem(at: temporary) }
+            try fileManager.copyItem(at: source, to: temporary)
+            if verify {
+                guard try filesMatch(source, temporary) else {
+                    throw TransferError.verificationFailed(source.lastPathComponent)
+                }
+            }
+            try fileManager.moveItem(at: temporary, to: url)
+            try reveal(url)
+            return CompletedCopy(url: url, alreadyPresent: false)
+        }
+    }
+
+    private func reveal(_ url: URL) throws {
+        var visibleURL = url
+        var values = URLResourceValues()
+        values.isHidden = false
+        try visibleURL.setResourceValues(values)
     }
 
     private enum DestinationChoice {
@@ -196,12 +251,26 @@ actor TransferEngine {
             throw TransferError.destinationUnavailable(request.importFolderName)
         }
         let source = request.sourceRoot.standardizedFileURL.path
-        for destination in [request.nefDestination, request.jpegDestination] {
+        let destinations = [request.nefDestination, request.jpegDestination] + [request.backupDestination].compactMap { $0 }
+        for destination in destinations {
             let path = destination.standardizedFileURL.path
-            if path == source || path.hasPrefix(source + "/") || source.hasPrefix(path + "/") {
+            if overlaps(path, source) {
                 throw TransferError.sourceAndDestinationOverlap
             }
         }
+
+        if let backupDestination = request.backupDestination {
+            let backup = backupDestination.standardizedFileURL.path
+            for primary in [request.nefDestination, request.jpegDestination] {
+                if overlaps(backup, primary.standardizedFileURL.path) {
+                    throw TransferError.backupAndPrimaryDestinationOverlap
+                }
+            }
+        }
+    }
+
+    private func overlaps(_ lhs: String, _ rhs: String) -> Bool {
+        lhs == rhs || lhs.hasPrefix(rhs + "/") || rhs.hasPrefix(lhs + "/")
     }
 
     private func deleteOriginalIfRequested(_ url: URL, request: TransferRequest) throws -> Bool {
@@ -238,6 +307,7 @@ actor TransferEngine {
         TransferItemResult(
             source: file.url,
             destination: nil,
+            backupDestination: nil,
             outcome: .failed(error.localizedDescription),
             originalDeleted: false
         )
@@ -246,12 +316,14 @@ actor TransferEngine {
     private func cleanupFailed(
         _ file: SourceFile,
         destination: URL,
+        backupDestination: URL?,
         error: Error,
         alreadyPresent: Bool
     ) -> TransferItemResult {
         TransferItemResult(
             source: file.url,
             destination: destination,
+            backupDestination: backupDestination,
             outcome: .cleanupFailed(
                 "The copy is verified, but the original could not be deleted: \(error.localizedDescription)",
                 alreadyPresent: alreadyPresent

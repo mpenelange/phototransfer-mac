@@ -33,6 +33,7 @@ final class AppModel {
     private(set) var isScanning = false
     private(set) var isTransferring = false
     private(set) var ejectionState: EjectionState = .idle
+    private(set) var activeImportFolderName: String?
     var errorMessage: String?
 
     var deleteOriginals: Bool {
@@ -70,7 +71,7 @@ final class AppModel {
     var nefDestinationURL: URL? { nefDestinationGrant?.url }
     var jpegDestinationURL: URL? { jpegDestinationGrant?.url }
     var backupDestinationURL: URL? { backupDestinationGrant?.url }
-    var importFolderName: String { ImportFolderNaming.folderName() }
+    var importFolderName: String { activeImportFolderName ?? ImportFolderNaming.folderName() }
     var effectiveNEFDestinationURL: URL? {
         nefDestinationURL?.appending(path: importFolderName, directoryHint: .isDirectory)
     }
@@ -167,7 +168,7 @@ final class AppModel {
         guard let sourceURL else { return }
         isScanning = true
         errorMessage = nil
-        transferSummary = nil
+        resetTransferState()
         defer { isScanning = false }
 
         do {
@@ -195,6 +196,8 @@ final class AppModel {
         errorMessage = nil
         transferSummary = nil
         ejectionState = .idle
+        let transferImportFolderName = ImportFolderNaming.folderName()
+        activeImportFolderName = transferImportFolderName
         transferProgress = TransferProgress(
             completedCount: 0,
             totalCount: files.count,
@@ -209,7 +212,7 @@ final class AppModel {
             nefDestination: nefDestinationURL,
             jpegDestination: jpegDestinationURL,
             backupDestination: backupEnabled ? backupDestinationURL : nil,
-            importFolderName: importFolderName,
+            importFolderName: transferImportFolderName,
             otherFilePolicy: otherFilePolicy,
             deleteOriginals: deleteOriginals,
             verifyCopies: verifyCopies
@@ -286,6 +289,7 @@ final class AppModel {
         transferProgress = nil
         transferSummary = nil
         ejectionState = .idle
+        activeImportFolderName = nil
     }
 
     private func clearScan() {

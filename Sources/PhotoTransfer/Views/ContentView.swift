@@ -330,7 +330,7 @@ struct ContentView: View {
                 }
 
                 HStack(spacing: 10) {
-                    CapabilityBadge(label: model.verifyCopies ? "SHA-256" : "No verify", systemImage: "checkmark.shield")
+                    CapabilityBadge(label: model.verifyCopies ? "Verified" : "Unverified", systemImage: "checkmark.shield")
                     CapabilityBadge(label: model.backupEnabled ? "Backup" : "Primary only", systemImage: "externaldrive")
                     CapabilityBadge(label: model.deleteOriginals ? "Delete" : "Keep originals", systemImage: model.deleteOriginals ? "trash" : "lock")
                 }
@@ -376,9 +376,9 @@ struct ContentView: View {
 
     private var deletionConfirmationMessage: String {
         if model.backupEnabled {
-            "Each original will be deleted only after both its primary and backup copies pass SHA-256 verification. Failed files stay on the source."
+            "Each original will be deleted only after both its primary and backup copies pass verification. Failed files stay on the source."
         } else {
-            "Each original will be deleted only after its destination copy passes SHA-256 verification. Failed files stay on the source."
+            "Each original will be deleted only after its destination copy passes verification. Failed files stay on the source."
         }
     }
 

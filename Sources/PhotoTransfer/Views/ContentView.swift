@@ -10,7 +10,7 @@ struct ContentView: View {
     var body: some View {
         HStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 16) {
                     header
                     sourceSection
                     destinationSection
@@ -19,10 +19,10 @@ struct ContentView: View {
                     transferSection
                 }
                 .padding(24)
-                .frame(maxWidth: 820)
+                .frame(maxWidth: 760)
                 .frame(maxWidth: .infinity)
             }
-            .frame(minWidth: 650)
+            .frame(minWidth: 620)
 
             if model.photoGroups.isEmpty == false {
                 Divider()
@@ -30,7 +30,7 @@ struct ContentView: View {
                     .frame(width: 330)
             }
         }
-        .frame(minWidth: model.photoGroups.isEmpty ? 650 : 980)
+        .frame(minWidth: model.photoGroups.isEmpty ? 720 : 980)
         .navigationTitle("Photo Transfer")
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { model.refreshVolumes() }
@@ -61,16 +61,17 @@ struct ContentView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             Image(systemName: "photo.stack.fill")
-                .font(.system(size: 34))
+                .font(.system(size: 28))
                 .foregroundStyle(.blue)
-                .frame(width: 54, height: 54)
-                .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 13))
+                .frame(width: 44, height: 44)
+                .background(.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 3) {
                 Text("Photo Transfer")
-                    .font(.title.bold())
+                    .font(.title2.bold())
                 Text("Copy camera files safely, then optionally clear the card.")
+                    .font(.callout)
                     .foregroundStyle(.secondary)
             }
         }

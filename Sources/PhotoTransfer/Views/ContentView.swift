@@ -6,25 +6,22 @@ struct ContentView: View {
     @Bindable var model: AppModel
     @Environment(\.scenePhase) private var scenePhase
     @State private var confirmDeletion = false
+    @State private var inspectorPresented = true
 
     var body: some View {
-        HStack(spacing: 0) {
-            operationsSidebar
-
-            Divider()
-
+        NavigationSplitView {
+            sourceNavigator
+                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
+        } detail: {
             workspace
-                .frame(minWidth: 560)
-
-            if model.photoGroups.isEmpty == false {
-                Divider()
-                PhotoSelectionTray(model: model)
-                    .frame(width: 340)
-            }
+                .inspector(isPresented: $inspectorPresented) {
+                    importInspector
+                        .inspectorColumnWidth(min: 260, ideal: 300, max: 360)
+                }
         }
-        .frame(minWidth: model.photoGroups.isEmpty ? 900 : 1_220, minHeight: 680)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .navigationTitle("Photo Transfer")
+        .navigationSplitViewStyle(.prominentDetail)
+        .frame(minWidth: model.photoGroups.isEmpty ? 900 : 1_180, minHeight: 680)
+        .navigationTitle("Import")
         .toolbar {
             ToolbarItemGroup {
                 Button {
@@ -40,12 +37,25 @@ struct ContentView: View {
                     Label("Scan", systemImage: "magnifyingglass")
                 }
                 .disabled(model.canScan == false)
+            }
 
+            ToolbarItem {
+                Button {
+                    inspectorPresented.toggle()
+                } label: {
+                    Label("Inspector", systemImage: "sidebar.trailing")
+                }
+                .help("Show or hide import settings")
+            }
+
+            ToolbarItem(placement: .primaryAction) {
                 Button {
                     startTransfer()
                 } label: {
-                    Label("Transfer", systemImage: model.deleteOriginals ? "arrow.right.circle.fill" : "square.and.arrow.down.fill")
+                    Label(transferButtonLabel, systemImage: model.deleteOriginals ? "arrow.right.circle.fill" : "square.and.arrow.down.fill")
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(model.deleteOriginals ? .red : .accentColor)
                 .disabled(model.canTransfer == false)
             }
         }
@@ -77,20 +87,120 @@ struct ContentView: View {
         }
     }
 
-    private var operationsSidebar: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            sidebarHeader
-
-            VStack(alignment: .leading, spacing: 10) {
-                SectionLabel("Source", systemImage: "externaldrive.connected.to.line.below")
-
+    private var sourceNavigator: some View {
+        List {
+            Section("Source") {
                 if let url = model.sourceURL {
-                    CompactPathRow(icon: "sdcard.fill", title: "Camera Card", url: url)
+                    SourceListRow(
+                        title: url.lastPathComponent,
+                        subtitle: url.path(percentEncoded: false),
+                        systemImage: "sdcard.fill"
+                    )
                 } else {
-                    CompactPlaceholderRow(icon: "sdcard", title: "No source selected")
+                    SourceListRow(
+                        title: "No Source",
+                        subtitle: "Choose a card, camera volume, or folder",
+                        systemImage: "sdcard"
+                    )
                 }
 
-                HStack(spacing: 8) {
+                Menu {
+                    if model.mountedVolumes.isEmpty {
+                        Text("No removable volumes found")
+                    } else {
+                        ForEach(model.mountedVolumes) { volume in
+                            Button(volume.name) { model.selectMountedVolume(volume) }
+                        }
+                    }
+                } label: {
+                    Label("Detected Devices", systemImage: "externaldrive")
+                }
+
+                Button {
+                    model.chooseSource()
+                } label: {
+                    Label("Choose Source", systemImage: "folder")
+                }
+            }
+
+            if model.mountedVolumes.isEmpty == false {
+                Section("Mounted") {
+                    ForEach(model.mountedVolumes) { volume in
+                        Button {
+                            model.selectMountedVolume(volume)
+                        } label: {
+                            SourceListRow(
+                                title: volume.name,
+                                subtitle: volume.url.path(percentEncoded: false),
+                                systemImage: volume.isEjectable ? "externaldrive.badge.checkmark" : "externaldrive"
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .listStyle(.sidebar)
+    }
+
+    private var workspace: some View {
+        ZStack {
+            Color(nsColor: .textBackgroundColor)
+                .opacity(0.18)
+                .ignoresSafeArea()
+
+            if model.photoGroups.isEmpty {
+                emptyWorkspace
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                HStack(spacing: 0) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 18) {
+                            if let result = model.scanResult {
+                                scanOverview(result)
+                            }
+
+                            transferPanel
+                            ejectionStatus
+                        }
+                        .padding(24)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+
+                    Divider()
+
+                    PhotoSelectionTray(model: model)
+                        .frame(width: 360)
+                }
+            }
+        }
+    }
+
+    private var emptyWorkspace: some View {
+        VStack(spacing: 18) {
+            Image(systemName: readinessIcon)
+                .font(.system(size: 44, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            VStack(spacing: 5) {
+                Text(readinessTitle)
+                    .font(.title3.weight(.semibold))
+                Text(readinessSubtitle)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            HStack {
+                Button {
+                    readinessPrimaryAction()
+                } label: {
+                    Label(readinessActionLabel, systemImage: readinessActionIcon)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(readinessActionIsDisabled)
+
+                if model.sourceURL == nil {
                     Menu {
                         if model.mountedVolumes.isEmpty {
                             Text("No removable volumes found")
@@ -100,57 +210,57 @@ struct ContentView: View {
                             }
                         }
                     } label: {
-                        Label("Devices", systemImage: "externaldrive")
+                        Label("Detected Devices", systemImage: "externaldrive")
                     }
                     .menuStyle(.borderedButton)
-
-                    Button("Choose", action: model.chooseSource)
                 }
             }
+        }
+        .padding(32)
+    }
 
-            Divider()
-
-            VStack(alignment: .leading, spacing: 10) {
-                SectionLabel("Destinations", systemImage: "folder.badge.plus")
-
-                DestinationRow(
+    private var importInspector: some View {
+        Form {
+            Section("Destinations") {
+                InspectorDestinationRow(
                     label: "NEF",
-                    icon: "camera.aperture",
+                    systemImage: "camera.aperture",
                     tint: .purple,
                     url: model.effectiveNEFDestinationURL,
                     choose: model.chooseNEFDestination
                 )
-                DestinationRow(
+
+                InspectorDestinationRow(
                     label: "JPEG",
-                    icon: "photo.fill",
+                    systemImage: "photo",
                     tint: .orange,
                     url: model.effectiveJPEGDestinationURL,
                     choose: model.chooseJPEGDestination
                 )
 
                 Toggle("Backup", isOn: $model.backupEnabled)
+
                 if model.backupEnabled {
-                    DestinationRow(
+                    InspectorDestinationRow(
                         label: "Backup",
-                        icon: "externaldrive.badge.checkmark",
-                        tint: .blue,
+                        systemImage: "externaldrive.badge.checkmark",
+                        tint: .secondary,
                         url: model.effectiveBackupDestinationURL,
                         choose: model.chooseBackupDestination
                     )
                 }
             }
 
-            Divider()
+            Section("Naming") {
+                LabeledContent("Import folder", value: model.importFolderName)
+            }
 
-            VStack(alignment: .leading, spacing: 12) {
-                SectionLabel("Import Rules", systemImage: "slider.horizontal.3")
-
-                Picker("Other", selection: $model.otherFilePolicy) {
+            Section("Rules") {
+                Picker("Other files", selection: $model.otherFilePolicy) {
                     ForEach(OtherFilePolicy.allCases) { policy in
                         Text(policy.label).tag(policy)
                     }
                 }
-                .pickerStyle(.menu)
 
                 Toggle("Delete originals", isOn: $model.deleteOriginals)
                     .tint(.red)
@@ -158,184 +268,82 @@ struct ContentView: View {
                 Toggle("Eject on success", isOn: $model.ejectAfterTransfer)
                     .disabled(model.canEjectSource == false)
             }
-
-            Spacer()
-
-            ImportFolderStrip(folderName: model.importFolderName)
         }
-        .padding(18)
-        .frame(width: 300)
-        .background(.regularMaterial)
-    }
-
-    private var sidebarHeader: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "photo.stack.fill")
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(.blue)
-                .frame(width: 32, height: 32)
-                .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Photo Transfer")
-                    .font(.headline)
-                Text("Import")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var workspace: some View {
-        VStack(spacing: 0) {
-            workspaceHeader
-
-            Divider()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if let result = model.scanResult {
-                        scanOverview(result)
-                    } else {
-                        emptyReview
-                    }
-
-                    transferPanel
-                    ejectionStatus
-                }
-                .padding(22)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
-        }
-    }
-
-    private var workspaceHeader: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(workspaceTitle)
-                    .font(.title3.weight(.semibold))
-                Text(workspaceSubtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            if model.isScanning {
-                ProgressView()
-                    .controlSize(.small)
-            }
-
-            Button {
-                Task { await model.scan() }
-            } label: {
-                Label("Scan Source", systemImage: "magnifyingglass")
-            }
-            .disabled(model.canScan == false)
-
-            Button {
-                startTransfer()
-            } label: {
-                Label(transferButtonLabel, systemImage: model.deleteOriginals ? "arrow.right.circle.fill" : "square.and.arrow.down.fill")
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(model.deleteOriginals ? .red : .accentColor)
-            .disabled(model.canTransfer == false)
-        }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 14)
-        .background(.bar)
-    }
-
-    private var emptyReview: some View {
-        ProPanel {
-            VStack(alignment: .leading, spacing: 16) {
-                Image(systemName: "rectangle.stack.badge.plus")
-                    .font(.system(size: 36))
-                    .foregroundStyle(.secondary)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("No import scanned")
-                        .font(.headline)
-                    Text("Select a source, then scan to review camera files.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(maxWidth: .infinity, minHeight: 240, alignment: .center)
-        }
+        .formStyle(.grouped)
+        .navigationTitle("Import Settings")
     }
 
     private func scanOverview(_ result: ScanResult) -> some View {
-        ProPanel {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
                     Text("Review")
                         .font(.headline)
-                    Spacer()
                     Text("\(model.selectedPhotoCount) of \(model.photoGroups.count) selected")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
-                HStack(spacing: 10) {
-                    StatTile(label: "NEF", value: "\(result.nefCount)", color: .purple)
-                    StatTile(label: "JPEG", value: "\(result.jpegCount)", color: .orange)
-                    StatTile(label: "Other", value: "\(result.otherCount)", color: .blue)
-                    StatTile(label: "Files", value: "\(model.selectedFiles.count)", color: .gray)
-                }
-
-                VStack(spacing: 0) {
-                    SummaryRow(label: "Selected data", value: byteCount(model.selectedByteCount))
-                    Divider()
-                    SummaryRow(label: "Import folder", value: model.importFolderName)
-                    if result.skippedFileCount > 0 {
-                        Divider()
-                        SummaryRow(label: "Skipped", value: "\(result.skippedFileCount) files")
-                    }
-                }
-                .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 6))
+                Spacer()
             }
+
+            HStack(spacing: 10) {
+                StatTile(label: "NEF", value: "\(result.nefCount)", color: .purple)
+                StatTile(label: "JPEG", value: "\(result.jpegCount)", color: .orange)
+                StatTile(label: "Other", value: "\(result.otherCount)", color: .blue)
+                StatTile(label: "Files", value: "\(model.selectedFiles.count)", color: .gray)
+            }
+
+            VStack(spacing: 0) {
+                SummaryRow(label: "Selected data", value: byteCount(model.selectedByteCount))
+                Divider()
+                SummaryRow(label: "Import folder", value: model.importFolderName)
+                if result.skippedFileCount > 0 {
+                    Divider()
+                    SummaryRow(label: "Skipped", value: "\(result.skippedFileCount) files")
+                }
+            }
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
         }
     }
 
     private var transferPanel: some View {
-        ProPanel {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Text("Transfer")
-                        .font(.headline)
-                    Spacer()
-                    Text(model.canTransfer ? "Ready" : "Waiting")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(model.canTransfer ? .green : .secondary)
-                }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Transfer")
+                    .font(.headline)
+                Spacer()
+                Text(model.canTransfer ? "Ready" : "Waiting")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(model.canTransfer ? .green : .secondary)
+            }
 
-                if model.isTransferring, let progress = model.transferProgress {
-                    VStack(alignment: .leading, spacing: 7) {
-                        ProgressView(value: Double(progress.completedCount), total: Double(max(progress.totalCount, 1)))
-                        HStack {
-                            Text(progress.currentFileName)
-                                .lineLimit(1)
-                            Spacer()
-                            Text("\(progress.completedCount) of \(progress.totalCount)")
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            if model.isTransferring, let progress = model.transferProgress {
+                VStack(alignment: .leading, spacing: 7) {
+                    ProgressView(value: Double(progress.completedCount), total: Double(max(progress.totalCount, 1)))
+                    HStack {
+                        Text(progress.currentFileName)
+                            .lineLimit(1)
+                        Spacer()
+                        Text("\(progress.completedCount) of \(progress.totalCount)")
                     }
-                }
-
-                if let summary = model.transferSummary {
-                    TransferSummaryView(summary: summary)
-                }
-
-                HStack(spacing: 10) {
-                    CapabilityBadge(label: model.verifyCopies ? "Verified" : "Unverified", systemImage: "checkmark.shield")
-                    CapabilityBadge(label: model.backupEnabled ? "Backup" : "Primary only", systemImage: "externaldrive")
-                    CapabilityBadge(label: model.deleteOriginals ? "Delete" : "Keep originals", systemImage: model.deleteOriginals ? "trash" : "lock")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
             }
+
+            if let summary = model.transferSummary {
+                TransferSummaryView(summary: summary)
+            }
+
+            HStack(spacing: 10) {
+                CapabilityBadge(label: model.verifyCopies ? "Verified" : "Unverified", systemImage: "checkmark.shield")
+                CapabilityBadge(label: model.backupEnabled ? "Backup" : "Primary only", systemImage: "externaldrive")
+                CapabilityBadge(label: model.deleteOriginals ? "Delete" : "Keep originals", systemImage: model.deleteOriginals ? "trash" : "lock")
+            }
         }
+        .padding(14)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
     }
 
     @ViewBuilder
@@ -354,17 +362,41 @@ struct ContentView: View {
         }
     }
 
-    private var workspaceTitle: String {
-        if model.isTransferring { return "Transferring" }
-        if model.scanResult != nil { return "Import Review" }
-        return "Import Workspace"
+    private var readinessTitle: String {
+        if model.sourceURL == nil { return "Choose a source to import photos" }
+        if model.nefDestinationURL == nil || model.jpegDestinationURL == nil { return "Set import destinations" }
+        if model.backupEnabled, model.backupDestinationURL == nil { return "Set backup destination" }
+        return "Ready to scan"
     }
 
-    private var workspaceSubtitle: String {
-        if model.scanResult != nil {
-            return "\(model.selectedPhotoCount) selections / \(model.selectedFiles.count) files / \(byteCount(model.selectedByteCount))"
-        }
-        return model.sourceURL?.lastPathComponent ?? "No source selected"
+    private var readinessSubtitle: String {
+        if model.sourceURL == nil { return "Start with a mounted card, camera volume, or DCIM folder." }
+        if model.nefDestinationURL == nil || model.jpegDestinationURL == nil { return "Choose where RAW and JPEG files should land." }
+        if model.backupEnabled, model.backupDestinationURL == nil { return "Backup is enabled, so choose a backup destination before scanning." }
+        return "Scan the source to review photos before transfer."
+    }
+
+    private var readinessIcon: String {
+        if model.sourceURL == nil { return "sdcard" }
+        if model.canScan { return "photo.on.rectangle.angled" }
+        return "folder.badge.plus"
+    }
+
+    private var readinessActionLabel: String {
+        if model.sourceURL == nil { return "Choose Source" }
+        if model.nefDestinationURL == nil { return "Set NEF Destination" }
+        if model.jpegDestinationURL == nil { return "Set JPEG Destination" }
+        if model.backupEnabled, model.backupDestinationURL == nil { return "Set Backup Destination" }
+        return "Scan Source"
+    }
+
+    private var readinessActionIcon: String {
+        if model.canScan { return "magnifyingglass" }
+        return "folder"
+    }
+
+    private var readinessActionIsDisabled: Bool {
+        readinessActionLabel == "Scan Source" && model.canScan == false
     }
 
     private var errorIsPresented: Binding<Bool> {
@@ -394,125 +426,74 @@ struct ContentView: View {
         }
     }
 
+    private func readinessPrimaryAction() {
+        if model.sourceURL == nil {
+            model.chooseSource()
+        } else if model.nefDestinationURL == nil {
+            model.chooseNEFDestination()
+        } else if model.jpegDestinationURL == nil {
+            model.chooseJPEGDestination()
+        } else if model.backupEnabled, model.backupDestinationURL == nil {
+            model.chooseBackupDestination()
+        } else {
+            Task { await model.scan() }
+        }
+    }
+
     private func byteCount(_ count: Int64) -> String {
         count.formatted(.byteCount(style: .file))
     }
 }
 
-private struct SectionLabel: View {
+private struct SourceListRow: View {
     let title: String
+    let subtitle: String
     let systemImage: String
 
-    init(_ title: String, systemImage: String) {
-        self.title = title
-        self.systemImage = systemImage
-    }
-
     var body: some View {
-        Label(title, systemImage: systemImage)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .textCase(.uppercase)
-    }
-}
-
-private struct ProPanel<Content: View>: View {
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        content
-            .padding(14)
-            .background(.background.secondary, in: RoundedRectangle(cornerRadius: 7))
-            .overlay {
-                RoundedRectangle(cornerRadius: 7)
-                    .stroke(.separator.opacity(0.45), lineWidth: 1)
-            }
-    }
-}
-
-private struct CompactPathRow: View {
-    let icon: String
-    let title: String
-    let url: URL
-
-    var body: some View {
-        HStack(spacing: 9) {
-            Image(systemName: icon)
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
+        Label {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
+                    .lineLimit(1)
+                Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(url.path(percentEncoded: false))
-                    .font(.callout)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .help(url.path(percentEncoded: false))
             }
+        } icon: {
+            Image(systemName: systemImage)
+                .foregroundStyle(.secondary)
         }
-        .padding(10)
-        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 6))
+        .help(subtitle)
     }
 }
 
-private struct CompactPlaceholderRow: View {
-    let icon: String
-    let title: String
-
-    var body: some View {
-        Label(title, systemImage: icon)
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 6))
-    }
-}
-
-private struct DestinationRow: View {
+private struct InspectorDestinationRow: View {
     let label: String
-    let icon: String
+    let systemImage: String
     let tint: Color
     let url: URL?
     let choose: () -> Void
 
     var body: some View {
-        HStack(spacing: 9) {
-            Image(systemName: icon)
-                .foregroundStyle(tint)
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label)
-                    .font(.caption.weight(.semibold))
-                Text(url?.path(percentEncoded: false) ?? "Not selected")
-                    .font(.caption)
-                    .foregroundStyle(url == nil ? .secondary : .primary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            Spacer(minLength: 6)
+        LabeledContent {
             Button(url == nil ? "Set" : "Edit", action: choose)
-                .controlSize(.small)
+        } label: {
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(label)
+                    Text(url?.path(percentEncoded: false) ?? "Not selected")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            } icon: {
+                Image(systemName: systemImage)
+                    .foregroundStyle(tint)
+            }
         }
-        .padding(9)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
-    }
-}
-
-private struct ImportFolderStrip: View {
-    let folderName: String
-
-    var body: some View {
-        HStack {
-            Label(folderName, systemImage: "calendar")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 6))
     }
 }
 

@@ -11,16 +11,17 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             sourceNavigator
-                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
+                .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 360)
         } detail: {
             workspace
+                .navigationTitle(workspaceNavigationTitle)
                 .inspector(isPresented: $inspectorPresented) {
                     importInspector
-                        .inspectorColumnWidth(min: 260, ideal: 300, max: 360)
+                        .inspectorColumnWidth(min: 300, ideal: 340, max: 420)
                 }
         }
         .navigationSplitViewStyle(.prominentDetail)
-        .frame(minWidth: model.photoGroups.isEmpty ? 900 : 1_180, minHeight: 680)
+        .frame(minWidth: model.photoGroups.isEmpty ? 1_080 : 1_320, minHeight: 720)
         .navigationTitle("Import")
         .toolbar {
             ToolbarItemGroup {
@@ -49,14 +50,7 @@ struct ContentView: View {
             }
 
             ToolbarItem(placement: .primaryAction) {
-                Button {
-                    startTransfer()
-                } label: {
-                    Label(transferButtonLabel, systemImage: model.deleteOriginals ? "arrow.right.circle.fill" : "square.and.arrow.down.fill")
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(model.deleteOriginals ? .red : .accentColor)
-                .disabled(model.canTransfer == false)
+                transferToolbarButton
             }
         }
         .onChange(of: scenePhase) { _, phase in
@@ -96,30 +90,36 @@ struct ContentView: View {
                         subtitle: url.path(percentEncoded: false),
                         systemImage: "sdcard.fill"
                     )
+
+                    Button {
+                        model.chooseSource()
+                    } label: {
+                        Label("Change Source", systemImage: "folder")
+                    }
                 } else {
                     SourceListRow(
                         title: "No Source",
                         subtitle: "Choose a card, camera volume, or folder",
                         systemImage: "sdcard"
                     )
-                }
 
-                Menu {
-                    if model.mountedVolumes.isEmpty {
-                        Text("No removable volumes found")
-                    } else {
-                        ForEach(model.mountedVolumes) { volume in
-                            Button(volume.name) { model.selectMountedVolume(volume) }
-                        }
+                    Button {
+                        model.chooseSource()
+                    } label: {
+                        Label("Choose Folder", systemImage: "folder")
                     }
-                } label: {
-                    Label("Detected Devices", systemImage: "externaldrive")
-                }
 
-                Button {
-                    model.chooseSource()
-                } label: {
-                    Label("Choose Source", systemImage: "folder")
+                    Menu {
+                        if model.mountedVolumes.isEmpty {
+                            Text("No removable volumes found")
+                        } else {
+                            ForEach(model.mountedVolumes) { volume in
+                                Button(volume.name) { model.selectMountedVolume(volume) }
+                            }
+                        }
+                    } label: {
+                        Label("Detected Devices", systemImage: "externaldrive")
+                    }
                 }
             }
 
@@ -141,6 +141,7 @@ struct ContentView: View {
             }
         }
         .listStyle(.sidebar)
+        .controlSize(.small)
     }
 
     private var workspace: some View {
@@ -152,6 +153,7 @@ struct ContentView: View {
             if model.photoGroups.isEmpty {
                 emptyWorkspace
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .offset(y: -36)
             } else {
                 HStack(spacing: 0) {
                     ScrollView {
@@ -170,7 +172,7 @@ struct ContentView: View {
                     Divider()
 
                     PhotoSelectionTray(model: model)
-                        .frame(width: 360)
+                        .frame(width: 380)
                 }
             }
         }
@@ -270,7 +272,28 @@ struct ContentView: View {
             }
         }
         .formStyle(.grouped)
-        .navigationTitle("Import Settings")
+        .controlSize(.small)
+    }
+
+    @ViewBuilder
+    private var transferToolbarButton: some View {
+        if model.canTransfer {
+            Button {
+                startTransfer()
+            } label: {
+                Label(transferButtonLabel, systemImage: model.deleteOriginals ? "arrow.right.circle.fill" : "square.and.arrow.down.fill")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(model.deleteOriginals ? .red : .accentColor)
+        } else {
+            Button {
+                startTransfer()
+            } label: {
+                Label(transferButtonLabel, systemImage: model.deleteOriginals ? "arrow.right.circle.fill" : "square.and.arrow.down.fill")
+            }
+            .buttonStyle(.bordered)
+            .disabled(true)
+        }
     }
 
     private func scanOverview(_ result: ScanResult) -> some View {
@@ -367,6 +390,12 @@ struct ContentView: View {
         if model.nefDestinationURL == nil || model.jpegDestinationURL == nil { return "Set import destinations" }
         if model.backupEnabled, model.backupDestinationURL == nil { return "Set backup destination" }
         return "Ready to scan"
+    }
+
+    private var workspaceNavigationTitle: String {
+        if model.isTransferring { return "Transferring" }
+        if model.scanResult != nil { return "Review Import" }
+        return "Import"
     }
 
     private var readinessSubtitle: String {

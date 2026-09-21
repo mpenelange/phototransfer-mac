@@ -114,14 +114,66 @@ private struct PhotoThumbnail: View {
             image = nil
             return
         }
+        let thumbnail = await ThumbnailCache.shared.image(for: url)
+        guard Task.isCancelled == false else { return }
+        image = thumbnail
+    }
+}
+
+@MainActor
+private final class ThumbnailCache {
+    static let shared = ThumbnailCache()
+
+    private let cache = NSCache<NSURL, NSImage>()
+    private let maximumConcurrentRequests = 4
+    private var activeRequestCount = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    private init() {
+        cache.countLimit = 256
+        cache.totalCostLimit = 64 * 1_024 * 1_024
+    }
+
+    func image(for url: URL) async -> NSImage? {
+        if let cached = cache.object(forKey: url as NSURL) {
+            return cached
+        }
+
+        await acquireRequestSlot()
+        defer { releaseRequestSlot() }
+
+        guard Task.isCancelled == false else { return nil }
         let request = QLThumbnailGenerator.Request(
             fileAt: url,
             size: CGSize(width: 164, height: 120),
             scale: NSScreen.main?.backingScaleFactor ?? 2,
             representationTypes: .thumbnail
         )
-        image = try? await QLThumbnailGenerator.shared
+        guard let image = try? await QLThumbnailGenerator.shared
             .generateBestRepresentation(for: request)
-            .nsImage
+            .nsImage else {
+            return nil
+        }
+
+        cache.setObject(image, forKey: url as NSURL, cost: 164 * 120 * 4)
+        return image
+    }
+
+    private func acquireRequestSlot() async {
+        if activeRequestCount < maximumConcurrentRequests {
+            activeRequestCount += 1
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    private func releaseRequestSlot() {
+        if waiters.isEmpty {
+            activeRequestCount -= 1
+        } else {
+            waiters.removeFirst().resume()
+        }
     }
 }

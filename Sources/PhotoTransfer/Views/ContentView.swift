@@ -9,23 +9,24 @@ struct ContentView: View {
     @State private var inspectorPresented = true
 
     var body: some View {
-        NavigationSplitView {
+        HStack(spacing: 0) {
             sourceNavigator
-                .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 360)
-        } detail: {
+                .frame(width: 300)
+
+            Divider()
+
             workspace
-                .navigationTitle(workspaceNavigationTitle)
-                .inspector(isPresented: $inspectorPresented) {
-                    importInspector
-                        .inspectorColumnWidth(min: 300, ideal: 340, max: 420)
-                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            if inspectorPresented {
+                Divider()
+
+                importInspector
+                    .frame(width: 340)
+            }
         }
-        .navigationSplitViewStyle(.prominentDetail)
-        // Keep the split view's constraints stable while scan results replace the
-        // empty workspace. Changing them during a display cycle can make AppKit
-        // recursively invalidate constraints on macOS 27.
         .frame(minWidth: 1_320, minHeight: 720)
-        .navigationTitle("Import")
+        .navigationTitle(workspaceNavigationTitle)
         .toolbar {
             ToolbarItemGroup {
                 Button {

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		4CB8E8FC3060D67A0068B362 /* ImportHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CB8E8FB3060D67A0068B362 /* ImportHistoryStore.swift */; };
 		A10000000000000000000001 /* PhotoTransferApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* PhotoTransferApp.swift */; };
 		A10000000000000000000002 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* AppModel.swift */; };
 		A10000000000000000000003 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* Models.swift */; };
@@ -22,6 +23,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		4CB8E8FB3060D67A0068B362 /* ImportHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportHistoryStore.swift; sourceTree = "<group>"; };
 		A20000000000000000000001 /* PhotoTransferApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoTransferApp.swift; sourceTree = "<group>"; };
 		A20000000000000000000002 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		A20000000000000000000003 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -85,6 +87,7 @@
 				A20000000000000000000004 /* FileScanner.swift */,
 				A20000000000000000000005 /* FolderAccessStore.swift */,
 				A20000000000000000000006 /* TransferEngine.swift */,
+				4CB8E8FB3060D67A0068B362 /* ImportHistoryStore.swift */,
 				A20000000000000000000007 /* VolumeDiscovery.swift */,
 				A20000000000000000000013 /* VolumeEjector.swift */,
 			);
@@ -187,6 +190,7 @@
 				A10000000000000000000007 /* VolumeDiscovery.swift in Sources */,
 				A10000000000000000000008 /* ContentView.swift in Sources */,
 				A10000000000000000000009 /* SettingsView.swift in Sources */,
+				4CB8E8FC3060D67A0068B362 /* ImportHistoryStore.swift in Sources */,
 				A10000000000000000000011 /* VolumeEjector.swift in Sources */,
 				A10000000000000000000012 /* PhotoSelectionTray.swift in Sources */,
 			);

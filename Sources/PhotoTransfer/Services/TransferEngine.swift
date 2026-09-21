@@ -100,10 +100,14 @@ actor TransferEngine {
         }
 
         do {
+            let verificationRequired = request.verifyCopies
+                || request.deleteOriginals
+                || request.backupDestination != nil
+            let sourceDigest = verificationRequired ? try digest(of: file.url) : nil
             let primary = try copy(
                 file.url,
                 to: destinationRoot,
-                verify: request.verifyCopies || request.deleteOriginals || request.backupDestination != nil
+                sourceDigest: sourceDigest
             )
 
             var backupURL: URL?
@@ -112,7 +116,7 @@ actor TransferEngine {
                     let backup = try copy(
                         file.url,
                         to: importDestination(backupRoot, request: request),
-                        verify: true
+                        sourceDigest: sourceDigest
                     )
                     backupURL = backup.url
                 } catch {
@@ -157,8 +161,8 @@ actor TransferEngine {
         let alreadyPresent: Bool
     }
 
-    private func copy(_ source: URL, to root: URL, verify: Bool) throws -> CompletedCopy {
-        let destination = try availableDestination(for: source, in: root, verify: verify)
+    private func copy(_ source: URL, to root: URL, sourceDigest: SHA256.Digest?) throws -> CompletedCopy {
+        let destination = try availableDestination(for: source, in: root, sourceDigest: sourceDigest)
 
         switch destination {
         case .existing(let url):
@@ -168,8 +172,8 @@ actor TransferEngine {
             let temporary = temporaryURL(for: url)
             defer { try? fileManager.removeItem(at: temporary) }
             try fileManager.copyItem(at: source, to: temporary)
-            if verify {
-                guard try filesMatch(source, temporary) else {
+            if let sourceDigest {
+                guard try filesMatch(source, temporary, sourceDigest: sourceDigest) else {
                     throw TransferError.verificationFailed(source.lastPathComponent)
                 }
             }
@@ -191,7 +195,11 @@ actor TransferEngine {
         case new(URL)
     }
 
-    private func availableDestination(for source: URL, in root: URL, verify: Bool) throws -> DestinationChoice {
+    private func availableDestination(
+        for source: URL,
+        in root: URL,
+        sourceDigest: SHA256.Digest?
+    ) throws -> DestinationChoice {
         let baseName = source.deletingPathExtension().lastPathComponent
         let pathExtension = source.pathExtension
         var sequence = 1
@@ -206,7 +214,7 @@ actor TransferEngine {
             guard fileManager.fileExists(atPath: candidate.path) else {
                 return .new(candidate)
             }
-            if verify, try filesMatch(source, candidate) {
+            if let sourceDigest, try filesMatch(source, candidate, sourceDigest: sourceDigest) {
                 return .existing(candidate)
             }
             sequence += 1
@@ -279,11 +287,15 @@ actor TransferEngine {
         return true
     }
 
-    private func filesMatch(_ lhs: URL, _ rhs: URL) throws -> Bool {
+    private func filesMatch(
+        _ lhs: URL,
+        _ rhs: URL,
+        sourceDigest: SHA256.Digest? = nil
+    ) throws -> Bool {
         let lhsValues = try lhs.resourceValues(forKeys: [.fileSizeKey])
         let rhsValues = try rhs.resourceValues(forKeys: [.fileSizeKey])
         guard lhsValues.fileSize == rhsValues.fileSize else { return false }
-        return try digest(of: lhs) == digest(of: rhs)
+        return try (sourceDigest ?? digest(of: lhs)) == digest(of: rhs)
     }
 
     private func digest(of url: URL) throws -> SHA256.Digest {

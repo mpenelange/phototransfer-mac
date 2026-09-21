@@ -29,8 +29,10 @@ actor FileScanner {
             .isRegularFileKey,
             .isHiddenKey,
             .fileSizeKey,
-            .isSymbolicLinkKey
+            .isSymbolicLinkKey,
+            .contentModificationDateKey
         ]
+        let resourceKeys = Set(keys)
         guard let enumerator = fileManager.enumerator(
             at: source,
             includingPropertiesForKeys: keys,
@@ -45,7 +47,7 @@ actor FileScanner {
 
         for case let url as URL in enumerator {
             do {
-                let values = try url.resourceValues(forKeys: Set(keys))
+                let values = try url.resourceValues(forKeys: resourceKeys)
                 guard values.isRegularFile == true,
                       values.isHidden != true,
                       values.isSymbolicLink != true,
@@ -61,7 +63,8 @@ actor FileScanner {
                 files.append(SourceFile(
                     url: url,
                     kind: kind,
-                    byteCount: Int64(values.fileSize ?? 0)
+                    byteCount: Int64(values.fileSize ?? 0),
+                    modificationDate: values.contentModificationDate
                 ))
             } catch {
                 skipped += 1

@@ -42,6 +42,14 @@ struct SourceFile: Identifiable, Hashable, Sendable {
     let url: URL
     let kind: MediaKind
     let byteCount: Int64
+    let modificationDate: Date?
+
+    init(url: URL, kind: MediaKind, byteCount: Int64, modificationDate: Date? = nil) {
+        self.url = url
+        self.kind = kind
+        self.byteCount = byteCount
+        self.modificationDate = modificationDate
+    }
 
     var id: URL { url }
 }

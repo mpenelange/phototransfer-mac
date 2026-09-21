@@ -14,10 +14,12 @@ final class AppModel {
         static let verifyCopies = "verifyCopies"
         static let otherFilePolicy = "otherFilePolicy"
         static let ejectAfterTransfer = "ejectAfterTransfer"
+        static let newFilesOnly = "newFilesOnly"
     }
 
     private let scanner = FileScanner()
     private let transferEngine = TransferEngine()
+    private let importHistory = ImportHistoryStore()
     private let defaults = UserDefaults.standard
 
     private(set) var sourceGrant: FolderGrant?
@@ -35,6 +37,7 @@ final class AppModel {
     private(set) var ejectionState: EjectionState = .idle
     private(set) var activeImportFolderName: String?
     var errorMessage: String?
+    private var lastTransferRequest: TransferRequest?
 
     var deleteOriginals: Bool {
         didSet {
@@ -65,6 +68,14 @@ final class AppModel {
 
     var ejectAfterTransfer: Bool {
         didSet { defaults.set(ejectAfterTransfer, forKey: DefaultsKey.ejectAfterTransfer) }
+    }
+
+    var newFilesOnly: Bool {
+        didSet {
+            defaults.set(newFilesOnly, forKey: DefaultsKey.newFilesOnly)
+            clearScan()
+            resetTransferState()
+        }
     }
 
     var sourceURL: URL? { sourceGrant?.url }
@@ -105,6 +116,8 @@ final class AppModel {
             .flatMap(\.files)
     }
     var selectedByteCount: Int64 { selectedFiles.reduce(0) { $0 + $1.byteCount } }
+    var failedTransferCount: Int { transferSummary?.failures.count ?? 0 }
+    var canRetryFailed: Bool { failedTransferCount > 0 && isBusy == false }
 
     init() {
         deleteOriginals = defaults.bool(forKey: DefaultsKey.deleteOriginals)
@@ -113,6 +126,7 @@ final class AppModel {
         otherFilePolicy = defaults.string(forKey: DefaultsKey.otherFilePolicy)
             .flatMap(OtherFilePolicy.init(rawValue:)) ?? .jpegDestination
         ejectAfterTransfer = defaults.bool(forKey: DefaultsKey.ejectAfterTransfer)
+        newFilesOnly = defaults.object(forKey: DefaultsKey.newFilesOnly) as? Bool ?? true
         sourceGrant = FolderAccessStore.restore(key: DefaultsKey.sourceBookmark)
         nefDestinationGrant = FolderAccessStore.restore(key: DefaultsKey.nefDestinationBookmark)
         jpegDestinationGrant = FolderAccessStore.restore(key: DefaultsKey.jpegDestinationBookmark)
@@ -172,7 +186,13 @@ final class AppModel {
         defer { isScanning = false }
 
         do {
-            let result = try await scanner.scan(source: sourceURL, otherFilePolicy: otherFilePolicy)
+            let scanned = try await scanner.scan(source: sourceURL, otherFilePolicy: otherFilePolicy)
+            let files = if newFilesOnly {
+                await importHistory.newFiles(in: scanned.files, sourceRoot: sourceURL)
+            } else {
+                scanned.files
+            }
+            let result = ScanResult(files: files, skippedFileCount: scanned.skippedFileCount)
             let groups = PhotoGrouping.groups(for: result.files)
             scanResult = result
             photoGroups = groups
@@ -192,20 +212,7 @@ final class AppModel {
         let files = selectedFiles
         guard files.isEmpty == false else { return }
 
-        isTransferring = true
-        errorMessage = nil
-        transferSummary = nil
-        ejectionState = .idle
         let transferImportFolderName = ImportFolderNaming.folderName()
-        activeImportFolderName = transferImportFolderName
-        transferProgress = TransferProgress(
-            completedCount: 0,
-            totalCount: files.count,
-            currentFileName: "Preparing…",
-            copiedByteCount: 0,
-            totalByteCount: selectedByteCount
-        )
-
         let request = TransferRequest(
             sourceRoot: sourceURL,
             files: files,
@@ -217,6 +224,45 @@ final class AppModel {
             deleteOriginals: deleteOriginals,
             verifyCopies: verifyCopies
         )
+        await performTransfer(request)
+    }
+
+    func retryFailedTransfer() async {
+        guard let previousRequest = lastTransferRequest,
+              let transferSummary else { return }
+        let failedURLs = Set(transferSummary.failures.map(\.source))
+        let files = previousRequest.files.filter { failedURLs.contains($0.url) }
+        guard files.isEmpty == false else { return }
+
+        let request = TransferRequest(
+            sourceRoot: previousRequest.sourceRoot,
+            files: files,
+            nefDestination: previousRequest.nefDestination,
+            jpegDestination: previousRequest.jpegDestination,
+            backupDestination: previousRequest.backupDestination,
+            importFolderName: previousRequest.importFolderName,
+            otherFilePolicy: previousRequest.otherFilePolicy,
+            deleteOriginals: previousRequest.deleteOriginals,
+            verifyCopies: previousRequest.verifyCopies
+        )
+        await performTransfer(request)
+    }
+
+    private func performTransfer(_ request: TransferRequest) async {
+        isTransferring = true
+        errorMessage = nil
+        transferSummary = nil
+        ejectionState = .idle
+        activeImportFolderName = request.importFolderName
+        lastTransferRequest = request
+        transferProgress = TransferProgress(
+            completedCount: 0,
+            totalCount: request.files.count,
+            currentFileName: "Preparing…",
+            copiedByteCount: 0,
+            totalByteCount: request.files.reduce(0) { $0 + $1.byteCount }
+        )
+
         let summary = await transferEngine.transfer(request) { [weak self] progress in
             await MainActor.run {
                 self?.transferProgress = progress
@@ -224,6 +270,21 @@ final class AppModel {
         }
 
         transferSummary = summary
+        let importedFiles = request.files.filter { file in
+            guard let result = summary.results.first(where: { $0.source == file.url }) else { return false }
+            return switch result.outcome {
+            case .copied, .alreadyPresent:
+                true
+            default:
+                false
+            }
+        }
+        var historyError: Error?
+        do {
+            try await importHistory.record(importedFiles, sourceRoot: request.sourceRoot)
+        } catch {
+            historyError = error
+        }
         if ejectAfterTransfer {
             if summary.isFullySuccessful {
                 ejectSourceVolume()
@@ -232,18 +293,22 @@ final class AppModel {
             }
         }
         isTransferring = false
-        if summary.failedCount > 0 || summary.backupFailedCount > 0 || summary.cleanupFailedCount > 0 {
-            var details: [String] = []
-            if summary.failedCount > 0 {
-                details.append("\(summary.failedCount) file(s) could not be transferred")
-            }
-            if summary.cleanupFailedCount > 0 {
-                details.append("\(summary.cleanupFailedCount) copied original(s) could not be deleted")
-            }
-            if summary.backupFailedCount > 0 {
-                details.append("\(summary.backupFailedCount) file(s) could not be backed up; originals were kept")
-            }
-            errorMessage = details.joined(separator: "; ") + "."
+        var details: [String] = []
+        if summary.failedCount > 0 {
+            details.append("\(summary.failedCount) file(s) could not be transferred")
+        }
+        if summary.cleanupFailedCount > 0 {
+            details.append("\(summary.cleanupFailedCount) copied original(s) could not be deleted")
+        }
+        if summary.backupFailedCount > 0 {
+            details.append("\(summary.backupFailedCount) file(s) could not be backed up; originals were kept")
+        }
+        if let historyError {
+            details.append("the import completed, but its history could not be saved: \(historyError.localizedDescription)")
+        }
+        if details.isEmpty == false {
+            let message = details.joined(separator: "; ") + "."
+            errorMessage = [errorMessage, message].compactMap { $0 }.joined(separator: " ")
         }
     }
 
@@ -288,6 +353,7 @@ final class AppModel {
     private func resetTransferState() {
         transferProgress = nil
         transferSummary = nil
+        lastTransferRequest = nil
         ejectionState = .idle
         activeImportFolderName = nil
     }

@@ -21,7 +21,10 @@ struct ContentView: View {
                 }
         }
         .navigationSplitViewStyle(.prominentDetail)
-        .frame(minWidth: model.photoGroups.isEmpty ? 1_080 : 1_320, minHeight: 720)
+        // Keep the split view's constraints stable while scan results replace the
+        // empty workspace. Changing them during a display cycle can make AppKit
+        // recursively invalidate constraints on macOS 27.
+        .frame(minWidth: 1_320, minHeight: 720)
         .navigationTitle("Import")
         .toolbar {
             ToolbarItemGroup {
@@ -264,6 +267,8 @@ struct ContentView: View {
                     }
                 }
 
+                Toggle("New files only", isOn: $model.newFilesOnly)
+
                 Toggle("Delete originals", isOn: $model.deleteOriginals)
                     .tint(.red)
 
@@ -357,6 +362,11 @@ struct ContentView: View {
 
             if let summary = model.transferSummary {
                 TransferSummaryView(summary: summary)
+                if model.canRetryFailed {
+                    Button("Retry \(model.failedTransferCount) Failed") {
+                        Task { await model.retryFailedTransfer() }
+                    }
+                }
             }
 
             HStack(spacing: 10) {

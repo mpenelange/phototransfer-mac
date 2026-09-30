@@ -30,6 +30,8 @@ final class AppModel {
     private(set) var scanResult: ScanResult?
     private(set) var photoGroups: [PhotoGroup] = []
     private(set) var selectedPhotoGroupIDs: Set<PhotoGroupID> = []
+    /// Photos from the current scan whose files all transferred successfully.
+    private(set) var importedPhotoGroupIDs: Set<PhotoGroupID> = []
     private(set) var transferProgress: TransferProgress?
     private(set) var transferSummary: TransferSummary?
     private(set) var isScanning = false
@@ -107,6 +109,15 @@ final class AppModel {
             && jpegDestinationURL != nil
             && (backupEnabled == false || backupDestinationURL != nil)
             && isBusy == false
+    }
+    /// Why a transfer can't start yet, or nil when it can (or while busy).
+    var transferBlocker: String? {
+        if isBusy { return nil }
+        if nefDestinationURL == nil { return "Set a NEF destination to transfer." }
+        if jpegDestinationURL == nil { return "Set a JPEG destination to transfer." }
+        if backupEnabled, backupDestinationURL == nil { return "Set a backup destination to transfer." }
+        if selectedFiles.isEmpty { return "Select photos to transfer." }
+        return nil
     }
     var selectedPhotoCount: Int { selectedPhotoGroupIDs.count }
     var selectedFiles: [SourceFile] {
@@ -215,6 +226,7 @@ final class AppModel {
             let groups = PhotoGrouping.groups(for: result.files)
             scanResult = result
             photoGroups = groups
+            importedPhotoGroupIDs = []
             alreadyImportedCount = scanned.files.count - files.count
             let groupIDs = Set(groups.map(\.id))
             selectedPhotoGroupIDs = if preservingSelection {
@@ -304,6 +316,12 @@ final class AppModel {
                 false
             }
         }
+        let importedURLs = Set(importedFiles.map(\.url))
+        let importedGroups = photoGroups
+            .filter { group in group.files.allSatisfy { importedURLs.contains($0.url) } }
+            .map(\.id)
+        importedPhotoGroupIDs.formUnion(importedGroups)
+        selectedPhotoGroupIDs.subtract(importedGroups)
         var historyError: Error?
         do {
             try await importHistory.record(importedFiles, sourceRoot: request.sourceRoot)
@@ -343,6 +361,10 @@ final class AppModel {
         resetTransferState()
     }
 
+    func isImported(_ group: PhotoGroup) -> Bool {
+        importedPhotoGroupIDs.contains(group.id)
+    }
+
     func isSelected(_ group: PhotoGroup) -> Bool {
         selectedPhotoGroupIDs.contains(group.id)
     }
@@ -355,8 +377,9 @@ final class AppModel {
         }
     }
 
+    /// Selects every photo that hasn't already been transferred from this scan.
     func selectAllPhotos() {
-        selectedPhotoGroupIDs = Set(photoGroups.map(\.id))
+        selectedPhotoGroupIDs = Set(photoGroups.map(\.id)).subtracting(importedPhotoGroupIDs)
     }
 
     func deselectAllPhotos() {
@@ -394,6 +417,7 @@ final class AppModel {
         scanResult = nil
         photoGroups = []
         selectedPhotoGroupIDs = []
+        importedPhotoGroupIDs = []
         alreadyImportedCount = 0
     }
 

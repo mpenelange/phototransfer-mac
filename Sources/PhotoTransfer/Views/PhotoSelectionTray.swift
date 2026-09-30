@@ -36,6 +36,7 @@ struct PhotoSelectionTray: View {
                     ForEach(model.photoGroups) { group in
                         PhotoSelectionRow(
                             group: group,
+                            isImported: model.isImported(group),
                             isSelected: Binding(
                                 get: { model.isSelected(group) },
                                 set: { model.setSelected($0, for: group) }
@@ -54,6 +55,7 @@ struct PhotoSelectionTray: View {
 
 private struct PhotoSelectionRow: View {
     let group: PhotoGroup
+    let isImported: Bool
     @Binding var isSelected: Bool
 
     var body: some View {
@@ -61,10 +63,19 @@ private struct PhotoSelectionRow: View {
             HStack(spacing: 10) {
                 PhotoThumbnail(url: group.previewURL)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(group.displayName)
-                        .font(.callout.weight(.medium))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                    HStack(spacing: 5) {
+                        Text(group.displayName)
+                            .font(.callout.weight(.medium))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        if isImported {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.green)
+                                .help("Imported")
+                                .accessibilityLabel("Imported")
+                        }
+                    }
                     HStack(spacing: 6) {
                         Text(group.typeLabel)
                             .font(.caption2.weight(.semibold))

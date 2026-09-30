@@ -47,8 +47,9 @@ struct ContentView: View {
                 Button {
                     Task { await model.scan() }
                 } label: {
-                    Label("Scan", systemImage: "magnifyingglass")
+                    Label("Scan", systemImage: "viewfinder")
                 }
+                .help("Scan the source for photos")
                 .disabled(model.canScan == false)
             }
 
@@ -63,6 +64,8 @@ struct ContentView: View {
 
             ToolbarItem(placement: .primaryAction) {
                 transferToolbarButton
+                    .labelStyle(.titleAndIcon)
+                    .help(model.transferBlocker ?? "Copy the selected photos to their destinations")
             }
         }
         .onChange(of: scenePhase) { _, phase in
@@ -111,7 +114,7 @@ struct ContentView: View {
                 } else {
                     SourceListRow(
                         title: "No Source",
-                        subtitle: "Choose a card, camera volume, or folder",
+                        subtitle: "Choose a card or folder",
                         systemImage: "sdcard"
                     )
 
@@ -415,7 +418,7 @@ struct ContentView: View {
             }
 
             VStack(spacing: 0) {
-                SummaryRow(label: "Selected data", value: byteCount(model.selectedByteCount))
+                SummaryRow(label: "Selected data", value: model.selectedByteCount == 0 ? "None" : byteCount(model.selectedByteCount))
                 Divider()
                 SummaryRow(label: "Import folder", value: model.importFolderName)
                 if result.skippedFileCount > 0 {
@@ -433,9 +436,15 @@ struct ContentView: View {
                 Text("Transfer")
                     .font(.headline)
                 Spacer()
-                Text(model.canTransfer ? "Ready" : "Waiting")
+                Text(transferStatus.label)
                     .font(.caption.weight(.medium))
-                    .foregroundStyle(model.canTransfer ? .green : .secondary)
+                    .foregroundStyle(transferStatus.color)
+            }
+
+            if transferStatus.label == "Waiting", let blocker = model.transferBlocker {
+                Text(blocker)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             if model.isTransferring, let progress = model.transferProgress {
@@ -554,6 +563,13 @@ struct ContentView: View {
         }
     }
 
+    private var transferStatus: (label: String, color: Color) {
+        if model.isTransferring { return ("Transferring", .secondary) }
+        if model.canTransfer { return ("Ready", .green) }
+        if model.transferSummary?.isFullySuccessful == true, model.selectedPhotoCount == 0 { return ("Done", .green) }
+        return ("Waiting", .secondary)
+    }
+
     private var transferButtonLabel: String {
         model.deleteOriginals ? "Transfer and Delete" : "Transfer"
     }
@@ -619,21 +635,29 @@ private struct InspectorDestinationRow: View {
     var body: some View {
         LabeledContent {
             Button(url == nil ? "Set" : "Edit", action: choose)
+                .accessibilityLabel(url == nil ? "Set \(label) destination" : "Change \(label) destination")
         } label: {
             Label {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(label)
-                    Text(url?.path(percentEncoded: false) ?? "Not selected")
+                    Text(folderSummary)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                        .truncationMode(.middle)
+                        .truncationMode(.head)
                 }
+                .help(url?.path(percentEncoded: false) ?? "")
             } icon: {
                 Image(systemName: systemImage)
                     .foregroundStyle(tint)
             }
         }
+    }
+
+    /// "Photos › 2026-09-30": the chosen folder and the dated import folder inside it.
+    private var folderSummary: String {
+        guard let url else { return "Not selected" }
+        return "\(url.deletingLastPathComponent().lastPathComponent) › \(url.lastPathComponent)"
     }
 }
 

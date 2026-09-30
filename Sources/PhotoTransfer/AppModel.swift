@@ -36,6 +36,11 @@ final class AppModel {
     private(set) var transferSummary: TransferSummary?
     private(set) var isScanning = false
     private(set) var isTransferring = false
+    private(set) var isCancellingTransfer = false
+    private var transferTask: Task<TransferSummary, Never>?
+    #if DEBUG
+    private var fixtureTransferDelay: Duration?
+    #endif
     private(set) var ejectionState: EjectionState = .idle
     private(set) var activeImportFolderName: String?
     private(set) var alreadyImportedCount = 0
@@ -134,6 +139,7 @@ final class AppModel {
         let fixture = DebugFixture.fromLaunchArguments()
         defaults = fixture?.defaults ?? .standard
         importHistory = ImportHistoryStore(directoryURL: fixture?.historyDirectoryURL)
+        fixtureTransferDelay = fixture?.transferDelay
         #else
         defaults = .standard
         importHistory = ImportHistoryStore()
@@ -300,11 +306,24 @@ final class AppModel {
             totalByteCount: request.files.reduce(0) { $0 + $1.byteCount }
         )
 
-        let summary = await transferEngine.transfer(request) { [weak self] progress in
-            await MainActor.run {
-                self?.transferProgress = progress
+        let engine = transferEngine
+        #if DEBUG
+        let delay = fixtureTransferDelay
+        #endif
+        let task = Task { [weak self] in
+            await engine.transfer(request) { [weak self] progress in
+                await MainActor.run {
+                    self?.transferProgress = progress
+                }
+                #if DEBUG
+                if let delay { try? await Task.sleep(for: delay) }
+                #endif
             }
         }
+        transferTask = task
+        let summary = await task.value
+        transferTask = nil
+        isCancellingTransfer = false
 
         transferSummary = summary
         let importedFiles = request.files.filter { file in
@@ -332,19 +351,21 @@ final class AppModel {
             if summary.isFullySuccessful {
                 ejectSourceVolume()
             } else {
-                ejectionState = .keptMounted("The card stayed mounted because the transfer had issues.")
+                ejectionState = .keptMounted(summary.wasCancelled
+                    ? "The card stayed mounted because the transfer was stopped."
+                    : "The card stayed mounted because the transfer had issues.")
             }
         }
         isTransferring = false
         var details: [String] = []
         if summary.failedCount > 0 {
-            details.append("\(summary.failedCount) file(s) could not be transferred")
+            details.append(summary.failedCount == 1 ? "1 file could not be transferred" : "\(summary.failedCount) files could not be transferred")
         }
         if summary.cleanupFailedCount > 0 {
-            details.append("\(summary.cleanupFailedCount) copied original(s) could not be deleted")
+            details.append(summary.cleanupFailedCount == 1 ? "1 copied original could not be deleted" : "\(summary.cleanupFailedCount) copied originals could not be deleted")
         }
         if summary.backupFailedCount > 0 {
-            details.append("\(summary.backupFailedCount) file(s) could not be backed up; originals were kept")
+            details.append(summary.backupFailedCount == 1 ? "1 file could not be backed up; its original was kept" : "\(summary.backupFailedCount) files could not be backed up; originals were kept")
         }
         if let historyError {
             details.append("the import completed, but its history could not be saved: \(historyError.localizedDescription)")
@@ -353,6 +374,13 @@ final class AppModel {
             let message = details.joined(separator: "; ") + "."
             errorMessage = [errorMessage, message].compactMap { $0 }.joined(separator: " ")
         }
+    }
+
+    /// Stops the transfer after the file in progress. Files not yet started stay selected.
+    func cancelTransfer() {
+        guard let transferTask, isCancellingTransfer == false else { return }
+        isCancellingTransfer = true
+        transferTask.cancel()
     }
 
     private func setSource(_ url: URL) {

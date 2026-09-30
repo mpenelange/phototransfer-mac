@@ -33,6 +33,9 @@ actor TransferEngine {
         self.fileManager = fileManager
     }
 
+    /// Transfers the request's files in order. Cancelling the calling task stops the transfer
+    /// between files: every file is either fully handled or not started, and files that were
+    /// not started are counted in `cancelledCount`.
     func transfer(
         _ request: TransferRequest,
         progress: ProgressHandler? = nil
@@ -64,6 +67,13 @@ actor TransferEngine {
         let totalBytes = request.files.reduce(0) { $0 + $1.byteCount }
 
         for (index, file) in request.files.enumerated() {
+            guard Task.isCancelled == false else {
+                return TransferSummary(
+                    results: results,
+                    copiedByteCount: copiedBytes,
+                    cancelledCount: request.files.count - index
+                )
+            }
             let result = transfer(file, request: request)
             results.append(result)
             switch result.outcome {

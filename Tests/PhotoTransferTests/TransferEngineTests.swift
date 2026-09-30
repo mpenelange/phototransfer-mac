@@ -222,6 +222,47 @@ struct TransferEngineTests {
         #expect(FileManager.default.fileExists(atPath: sourceFile.path))
     }
 
+    @Test("Stops between files when cancelled and leaves the rest untouched")
+    func cancelsBetweenFiles() async throws {
+        let root = try TemporaryFolder()
+        let source = try root.folder("source")
+        let raw = try root.folder("raw")
+        let jpeg = try root.folder("jpeg")
+        let files = try (1...3).map { index in
+            let url = source.appending(path: "DSC_000\(index).JPG")
+            try Data("jpeg \(index)".utf8).write(to: url)
+            return SourceFile(url: url, kind: .jpeg, byteCount: 6)
+        }
+        let request = TransferRequest(
+            sourceRoot: source,
+            files: files,
+            nefDestination: raw,
+            jpegDestination: jpeg,
+            backupDestination: nil,
+            importFolderName: "2026-08-18",
+            otherFilePolicy: .jpegDestination,
+            deleteOriginals: true,
+            verifyCopies: true
+        )
+
+        // Cancel the transfer's own task as soon as the first file finishes.
+        let result = await Task {
+            await TransferEngine().transfer(request) { _ in
+                withUnsafeCurrentTask { $0?.cancel() }
+            }
+        }.value
+
+        #expect(result.results.count == 1)
+        #expect(result.cancelledCount == 2)
+        #expect(result.wasCancelled)
+        #expect(result.isFullySuccessful == false)
+        #expect(FileManager.default.fileExists(atPath: dated(jpeg).appending(path: "DSC_0001.JPG").path))
+        #expect(FileManager.default.fileExists(atPath: files[0].url.path) == false)
+        #expect(FileManager.default.fileExists(atPath: dated(jpeg).appending(path: "DSC_0002.JPG").path) == false)
+        #expect(FileManager.default.fileExists(atPath: files[1].url.path))
+        #expect(FileManager.default.fileExists(atPath: files[2].url.path))
+    }
+
     private func request(
         source: URL,
         file: URL,

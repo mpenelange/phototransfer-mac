@@ -172,6 +172,14 @@ struct TransferItemResult: Sendable {
     let backupDestination: URL?
     let outcome: TransferOutcome
     let originalDeleted: Bool
+
+    /// The explanation for a failed, partially failed, or cleanup-failed file.
+    var issue: String? {
+        switch outcome {
+        case .failed(let message), .backupFailed(let message, _), .cleanupFailed(let message, _): message
+        case .copied, .alreadyPresent, .skipped: nil
+        }
+    }
 }
 
 struct TransferProgress: Sendable {
@@ -185,6 +193,10 @@ struct TransferProgress: Sendable {
 struct TransferSummary: Sendable {
     let results: [TransferItemResult]
     let copiedByteCount: Int64
+    /// Files that were never started because the transfer was cancelled.
+    var cancelledCount = 0
+
+    var wasCancelled: Bool { cancelledCount > 0 }
 
     var copiedCount: Int {
         results.count(where: {
@@ -215,7 +227,7 @@ struct TransferSummary: Sendable {
     var cleanupFailedCount: Int { results.count(where: { if case .cleanupFailed = $0.outcome { true } else { false } }) }
     var deletedCount: Int { results.count(where: \.originalDeleted) }
     var isFullySuccessful: Bool {
-        failedCount == 0 && backupFailedCount == 0 && cleanupFailedCount == 0
+        failedCount == 0 && backupFailedCount == 0 && cleanupFailedCount == 0 && wasCancelled == false
     }
     var failures: [TransferItemResult] {
         results.filter {

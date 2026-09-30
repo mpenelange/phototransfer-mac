@@ -15,6 +15,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var confirmDeletion = false
     @State private var inspectorPresented = true
+    @State private var showsTransferIssues = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -78,6 +79,12 @@ struct ContentView: View {
             model.refreshVolumes()
         }
         .alert("Photo Transfer", isPresented: errorIsPresented) {
+            if model.transferSummary?.failures.isEmpty == false {
+                Button("Show Issues…") {
+                    model.errorMessage = nil
+                    showsTransferIssues = true
+                }
+            }
             Button("OK") { model.errorMessage = nil }
         } message: {
             Text(model.errorMessage ?? "An unknown error occurred.")
@@ -458,14 +465,35 @@ struct ContentView: View {
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                    HStack {
+                        if model.isCancellingTransfer {
+                            Text("Stopping after the current file…")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(model.isCancellingTransfer ? "Stopping…" : "Stop Transfer", role: .cancel) {
+                            model.cancelTransfer()
+                        }
+                        .disabled(model.isCancellingTransfer)
+                        .help("Stop after the file in progress. Files not yet started stay on the source and stay selected.")
+                    }
                 }
             }
 
             if let summary = model.transferSummary {
                 TransferSummaryView(summary: summary)
-                if model.canRetryFailed {
-                    Button("Retry \(model.failedTransferCount) Failed") {
-                        Task { await model.retryFailedTransfer() }
+                if summary.failures.isEmpty == false || model.canRetryFailed {
+                    HStack {
+                        if summary.failures.isEmpty == false {
+                            Button("Show Issues…") { showsTransferIssues = true }
+                        }
+                        if model.canRetryFailed {
+                            Button("Retry \(model.failedTransferCount) Failed") {
+                                Task { await model.retryFailedTransfer() }
+                            }
+                        }
                     }
                 }
             }
@@ -482,6 +510,11 @@ struct ContentView: View {
         }
         .padding(14)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .sheet(isPresented: $showsTransferIssues) {
+            if let summary = model.transferSummary {
+                TransferIssuesView(summary: summary) { showsTransferIssues = false }
+            }
+        }
     }
 
     @ViewBuilder
@@ -564,7 +597,7 @@ struct ContentView: View {
     }
 
     private var transferStatus: (label: String, color: Color) {
-        if model.isTransferring { return ("Transferring", .secondary) }
+        if model.isTransferring { return (model.isCancellingTransfer ? "Stopping" : "Transferring", .secondary) }
         if model.canTransfer { return ("Ready", .green) }
         if model.transferSummary?.isFullySuccessful == true, model.selectedPhotoCount == 0 { return ("Done", .green) }
         return ("Waiting", .secondary)
@@ -757,11 +790,11 @@ private struct TransferSummaryView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: hasIssues == false ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+            Image(systemName: symbol)
                 .font(.title3)
-                .foregroundStyle(hasIssues == false ? .green : .orange)
+                .foregroundStyle(symbolColor)
             VStack(alignment: .leading, spacing: 2) {
-                Text(hasIssues == false ? "Transfer complete" : "Transfer completed with issues")
+                Text(title)
                     .font(.callout.weight(.semibold))
                 Text(detail)
                     .font(.caption)
@@ -781,10 +814,102 @@ private struct TransferSummaryView: View {
         if summary.backupFailedCount > 0 { parts.append("\(summary.backupFailedCount) backup failed") }
         if summary.cleanupFailedCount > 0 { parts.append("\(summary.cleanupFailedCount) originals kept") }
         if summary.failedCount > 0 { parts.append("\(summary.failedCount) failed") }
+        if summary.wasCancelled { parts.append("\(summary.cancelledCount) not started") }
         return parts.joined(separator: " / ")
+    }
+
+    private var title: String {
+        switch (summary.wasCancelled, hasIssues) {
+        case (true, true): "Transfer stopped with issues"
+        case (true, false): "Transfer stopped"
+        case (false, true): "Transfer completed with issues"
+        case (false, false): "Transfer complete"
+        }
+    }
+
+    private var symbol: String {
+        if hasIssues { return "exclamationmark.triangle.fill" }
+        return summary.wasCancelled ? "stop.circle.fill" : "checkmark.circle.fill"
+    }
+
+    private var symbolColor: Color {
+        if hasIssues { return .orange }
+        return summary.wasCancelled ? .secondary : .green
     }
 
     private var hasIssues: Bool {
         summary.failedCount > 0 || summary.backupFailedCount > 0 || summary.cleanupFailedCount > 0
+    }
+}
+
+/// Lists each file that failed, lost its backup, or kept its original, with the reason.
+private struct TransferIssuesView: View {
+    let summary: TransferSummary
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Transfer Issues")
+                    .font(.headline)
+                Text(summary.failures.count == 1 ? "1 file needs attention." : "\(summary.failures.count) files need attention.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(16)
+
+            Divider()
+
+            List(summary.failures, id: \.source) { item in
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: symbol(for: item.outcome))
+                        .foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(item.source.lastPathComponent)
+                            .font(.callout.weight(.medium))
+                        Text(item.issue ?? "Unknown issue")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                    Spacer()
+                    Button("Show in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([item.source])
+                    }
+                    .controlSize(.small)
+                    .disabled(FileManager.default.fileExists(atPath: item.source.path) == false)
+                }
+                .padding(.vertical, 3)
+            }
+            .listStyle(.inset)
+
+            Divider()
+
+            HStack {
+                Button("Copy Report") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(report, forType: .string)
+                }
+                Spacer()
+                Button("Done", action: dismiss)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
+        }
+        .frame(width: 520, height: 400)
+    }
+
+    private func symbol(for outcome: TransferOutcome) -> String {
+        switch outcome {
+        case .backupFailed: "externaldrive.badge.exclamationmark"
+        case .cleanupFailed: "trash.slash"
+        default: "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var report: String {
+        summary.failures
+            .map { "\($0.source.path(percentEncoded: false))\n  \($0.issue ?? "Unknown issue")" }
+            .joined(separator: "\n")
     }
 }

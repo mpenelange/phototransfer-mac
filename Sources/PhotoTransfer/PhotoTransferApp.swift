@@ -8,7 +8,7 @@ struct PhotoTransferApp: App {
         WindowGroup {
             ContentView(model: model)
         }
-        .defaultSize(width: 1_420, height: 820)
+        .defaultSize(width: 1_240, height: 760)
         .windowResizability(.contentMinSize)
 
         Settings {

@@ -36,6 +36,7 @@ final class AppModel {
     private(set) var isTransferring = false
     private(set) var ejectionState: EjectionState = .idle
     private(set) var activeImportFolderName: String?
+    private(set) var alreadyImportedCount = 0
     var errorMessage: String?
     private var lastTransferRequest: TransferRequest?
 
@@ -61,8 +62,7 @@ final class AppModel {
     var otherFilePolicy: OtherFilePolicy {
         didSet {
             defaults.set(otherFilePolicy.rawValue, forKey: DefaultsKey.otherFilePolicy)
-            clearScan()
-            resetTransferState()
+            scanSettingsChanged()
         }
     }
 
@@ -73,8 +73,7 @@ final class AppModel {
     var newFilesOnly: Bool {
         didSet {
             defaults.set(newFilesOnly, forKey: DefaultsKey.newFilesOnly)
-            clearScan()
-            resetTransferState()
+            scanSettingsChanged()
         }
     }
 
@@ -178,8 +177,12 @@ final class AppModel {
         resetTransferState()
     }
 
-    func scan() async {
+    /// Scans the source. When `preservingSelection` is true, photos that were deselected
+    /// before the re-scan stay deselected; newly found photos are selected.
+    func scan(preservingSelection: Bool = false) async {
         guard let sourceURL else { return }
+        let previousGroupIDs = Set(photoGroups.map(\.id))
+        let previousSelection = selectedPhotoGroupIDs
         isScanning = true
         errorMessage = nil
         resetTransferState()
@@ -196,7 +199,13 @@ final class AppModel {
             let groups = PhotoGrouping.groups(for: result.files)
             scanResult = result
             photoGroups = groups
-            selectedPhotoGroupIDs = Set(groups.map(\.id))
+            alreadyImportedCount = scanned.files.count - files.count
+            let groupIDs = Set(groups.map(\.id))
+            selectedPhotoGroupIDs = if preservingSelection {
+                groupIDs.subtracting(previousGroupIDs.subtracting(previousSelection))
+            } else {
+                groupIDs
+            }
         } catch {
             clearScan()
             errorMessage = error.localizedDescription
@@ -328,17 +337,24 @@ final class AppModel {
         } else {
             selectedPhotoGroupIDs.remove(group.id)
         }
-        resetTransferState()
     }
 
     func selectAllPhotos() {
         selectedPhotoGroupIDs = Set(photoGroups.map(\.id))
-        resetTransferState()
     }
 
     func deselectAllPhotos() {
         selectedPhotoGroupIDs.removeAll()
-        resetTransferState()
+    }
+
+    /// Settings that change what a scan finds re-run the scan instead of discarding it.
+    private func scanSettingsChanged() {
+        if scanResult != nil, isBusy == false {
+            Task { await scan(preservingSelection: true) }
+        } else {
+            clearScan()
+            resetTransferState()
+        }
     }
 
     private func saveGrant(_ url: URL, key: String) -> FolderGrant {
@@ -362,6 +378,7 @@ final class AppModel {
         scanResult = nil
         photoGroups = []
         selectedPhotoGroupIDs = []
+        alreadyImportedCount = 0
     }
 
     private func ejectSourceVolume() {

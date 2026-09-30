@@ -3,6 +3,14 @@ import Combine
 import SwiftUI
 
 struct ContentView: View {
+    private enum Layout {
+        static let sourceWidth: CGFloat = 220
+        static let inspectorWidth: CGFloat = 280
+        static let trayWidth: CGFloat = 300
+        static let minimumReviewWidth: CGFloat = 380
+        static let minimumHeight: CGFloat = 600
+    }
+
     @Bindable var model: AppModel
     @Environment(\.scenePhase) private var scenePhase
     @State private var confirmDeletion = false
@@ -11,7 +19,7 @@ struct ContentView: View {
     var body: some View {
         HStack(spacing: 0) {
             sourceNavigator
-                .frame(width: 300)
+                .frame(width: Layout.sourceWidth)
 
             Divider()
 
@@ -22,10 +30,10 @@ struct ContentView: View {
                 Divider()
 
                 importInspector
-                    .frame(width: 340)
+                    .frame(width: Layout.inspectorWidth)
             }
         }
-        .frame(minWidth: 1_320, minHeight: 720)
+        .frame(minWidth: minimumWindowWidth, minHeight: Layout.minimumHeight)
         .navigationTitle(workspaceNavigationTitle)
         .toolbar {
             ToolbarItemGroup {
@@ -155,13 +163,25 @@ struct ContentView: View {
                 .ignoresSafeArea()
 
             if model.photoGroups.isEmpty {
-                emptyWorkspace
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .offset(y: -36)
+                Group {
+                    if model.isScanning {
+                        scanningWorkspace
+                    } else if let result = model.scanResult {
+                        noPhotosWorkspace(result)
+                    } else {
+                        emptyWorkspace
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .offset(y: -36)
             } else {
                 HStack(spacing: 0) {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 18) {
+                            if model.isScanning {
+                                StatusStrip(systemImage: "magnifyingglass", message: "Updating scan…", color: .secondary, showsProgress: true)
+                            }
+
                             if let result = model.scanResult {
                                 scanOverview(result)
                             }
@@ -169,14 +189,14 @@ struct ContentView: View {
                             transferPanel
                             ejectionStatus
                         }
-                        .padding(24)
+                        .padding(18)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
 
                     Divider()
 
                     PhotoSelectionTray(model: model)
-                        .frame(width: 380)
+                        .frame(width: Layout.trayWidth)
                 }
             }
         }
@@ -225,6 +245,70 @@ struct ContentView: View {
         .padding(32)
     }
 
+    private var scanningWorkspace: some View {
+        VStack(spacing: 14) {
+            ProgressView()
+                .controlSize(.large)
+            VStack(spacing: 5) {
+                Text("Scanning \(model.sourceURL?.lastPathComponent ?? "source")…")
+                    .font(.title3.weight(.semibold))
+                Text(model.newFilesOnly ? "Looking for photos that haven't been imported yet." : "Looking for photos to import.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(32)
+    }
+
+    private func noPhotosWorkspace(_ result: ScanResult) -> some View {
+        VStack(spacing: 18) {
+            Image(systemName: model.alreadyImportedCount > 0 ? "checkmark.circle" : "photo.badge.exclamationmark")
+                .font(.system(size: 44, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            VStack(spacing: 5) {
+                Text(model.alreadyImportedCount > 0 ? "No new photos" : "No photos found")
+                    .font(.title3.weight(.semibold))
+                Text(noPhotosSubtitle(result))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            HStack {
+                Button {
+                    model.chooseSource()
+                } label: {
+                    Label("Choose Another Source", systemImage: "folder")
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button {
+                    Task { await model.scan() }
+                } label: {
+                    Label("Scan Again", systemImage: "arrow.clockwise")
+                }
+                .disabled(model.canScan == false)
+            }
+        }
+        .padding(32)
+    }
+
+    private func noPhotosSubtitle(_ result: ScanResult) -> String {
+        let imported = model.alreadyImportedCount
+        if imported > 0 {
+            let summary = imported == 1
+                ? "The only file on this source has already been imported."
+                : "All \(imported) files on this source have already been imported."
+            return summary + "\nTurn off “New files only” in the inspector to import again."
+        }
+        if result.skippedFileCount > 0 {
+            let files = result.skippedFileCount == 1 ? "file was" : "files were"
+            return "\(result.skippedFileCount) \(files) skipped by the “Other files” rule or couldn't be read."
+        }
+        return "This source doesn't contain any NEF, JPEG, or other importable files."
+    }
+
     private var importInspector: some View {
         Form {
             Section("Destinations") {
@@ -267,8 +351,10 @@ struct ContentView: View {
                         Text(policy.label).tag(policy)
                     }
                 }
+                .disabled(model.isBusy)
 
                 Toggle("New files only", isOn: $model.newFilesOnly)
+                    .disabled(model.isBusy)
 
                 Toggle("Delete originals", isOn: $model.deleteOriginals)
                     .tint(.red)
@@ -316,11 +402,16 @@ struct ContentView: View {
                 Spacer()
             }
 
-            HStack(spacing: 10) {
-                StatTile(label: "NEF", value: "\(result.nefCount)", color: .purple)
-                StatTile(label: "JPEG", value: "\(result.jpegCount)", color: .orange)
-                StatTile(label: "Other", value: "\(result.otherCount)", color: .blue)
-                StatTile(label: "Files", value: "\(model.selectedFiles.count)", color: .gray)
+            let selected = model.selectedFiles
+            let tiles = Group {
+                StatTile(label: "NEF", selected: selected.count(where: { $0.kind == .nef }), total: result.nefCount, color: .purple)
+                StatTile(label: "JPEG", selected: selected.count(where: { $0.kind == .jpeg }), total: result.jpegCount, color: .orange)
+                StatTile(label: "Other", selected: selected.count(where: { $0.kind == .other }), total: result.otherCount, color: .blue)
+                StatTile(label: "Files", selected: selected.count, total: result.files.count, color: .gray)
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) { tiles }
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) { tiles }
             }
 
             VStack(spacing: 0) {
@@ -329,7 +420,7 @@ struct ContentView: View {
                 SummaryRow(label: "Import folder", value: model.importFolderName)
                 if result.skippedFileCount > 0 {
                     Divider()
-                    SummaryRow(label: "Skipped", value: "\(result.skippedFileCount) files")
+                    SummaryRow(label: "Skipped", value: result.skippedFileCount == 1 ? "1 file" : "\(result.skippedFileCount) files")
                 }
             }
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -370,10 +461,14 @@ struct ContentView: View {
                 }
             }
 
-            HStack(spacing: 10) {
+            let badges = Group {
                 CapabilityBadge(label: model.verifyCopies ? "Verified" : "Unverified", systemImage: "checkmark.shield")
                 CapabilityBadge(label: model.backupEnabled ? "Backup" : "Primary only", systemImage: "externaldrive")
                 CapabilityBadge(label: model.deleteOriginals ? "Delete" : "Keep originals", systemImage: model.deleteOriginals ? "trash" : "lock")
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { badges }
+                VStack(alignment: .leading, spacing: 6) { badges }
             }
         }
         .padding(14)
@@ -403,9 +498,14 @@ struct ContentView: View {
         return "Ready to scan"
     }
 
+    private var minimumWindowWidth: CGFloat {
+        let columns = Layout.sourceWidth + Layout.trayWidth + Layout.minimumReviewWidth + 2
+        return inspectorPresented ? columns + Layout.inspectorWidth + 1 : columns
+    }
+
     private var workspaceNavigationTitle: String {
         if model.isTransferring { return "Transferring" }
-        if model.scanResult != nil { return "Review Import" }
+        if model.photoGroups.isEmpty == false { return "Review Import" }
         return "Import"
     }
 
@@ -537,15 +637,24 @@ private struct InspectorDestinationRow: View {
     }
 }
 
+/// Shows the selected count, with the scanned total when only part of it is selected.
 private struct StatTile: View {
     let label: String
-    let value: String
+    let selected: Int
+    let total: Int
     let color: Color
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(value)
-                .font(.title3.weight(.semibold))
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text("\(selected)")
+                    .font(.title3.weight(.semibold))
+                if selected != total {
+                    Text("of \(total)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)

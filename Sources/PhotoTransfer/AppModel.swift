@@ -19,8 +19,8 @@ final class AppModel {
 
     private let scanner = FileScanner()
     private let transferEngine = TransferEngine()
-    private let importHistory = ImportHistoryStore()
-    private let defaults = UserDefaults.standard
+    private let importHistory: ImportHistoryStore
+    private let defaults: UserDefaults
 
     private(set) var sourceGrant: FolderGrant?
     private(set) var nefDestinationGrant: FolderGrant?
@@ -119,6 +119,14 @@ final class AppModel {
     var canRetryFailed: Bool { failedTransferCount > 0 && isBusy == false }
 
     init() {
+        #if DEBUG
+        let fixture = DebugFixture.fromLaunchArguments()
+        defaults = fixture?.defaults ?? .standard
+        importHistory = ImportHistoryStore(directoryURL: fixture?.historyDirectoryURL)
+        #else
+        defaults = .standard
+        importHistory = ImportHistoryStore()
+        #endif
         deleteOriginals = defaults.bool(forKey: DefaultsKey.deleteOriginals)
         verifyCopies = defaults.object(forKey: DefaultsKey.verifyCopies) as? Bool ?? true
         backupEnabled = defaults.bool(forKey: DefaultsKey.backupEnabled)
@@ -130,6 +138,14 @@ final class AppModel {
         nefDestinationGrant = FolderAccessStore.restore(key: DefaultsKey.nefDestinationBookmark)
         jpegDestinationGrant = FolderAccessStore.restore(key: DefaultsKey.jpegDestinationBookmark)
         backupDestinationGrant = FolderAccessStore.restore(key: DefaultsKey.backupDestinationBookmark)
+        #if DEBUG
+        if let fixture {
+            sourceGrant = FolderGrant(url: fixture.sourceURL)
+            nefDestinationGrant = FolderGrant(url: fixture.nefDestinationURL)
+            jpegDestinationGrant = FolderGrant(url: fixture.jpegDestinationURL)
+            backupDestinationGrant = fixture.backupDestinationURL.map(FolderGrant.init(url:))
+        }
+        #endif
         if deleteOriginals || backupEnabled { verifyCopies = true }
         refreshVolumes()
     }

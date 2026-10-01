@@ -32,6 +32,8 @@ final class AppModel {
     private(set) var selectedPhotoGroupIDs: Set<PhotoGroupID> = []
     /// Photos from the current scan whose files all transferred successfully.
     private(set) var importedPhotoGroupIDs: Set<PhotoGroupID> = []
+    /// Successful source URLs remain completed until a new scan replaces this snapshot.
+    private var completedFileURLs: Set<URL> = []
     private(set) var transferProgress: TransferProgress?
     private(set) var transferSummary: TransferSummary?
     private(set) var isScanning = false
@@ -128,21 +130,50 @@ final class AppModel {
     var selectedFiles: [SourceFile] {
         photoGroups
             .filter { selectedPhotoGroupIDs.contains($0.id) }
-            .flatMap(\.files)
+            .flatMap { group in
+                // A deliberately reselected fully imported photo may be copied again.
+                // A partially imported photo must never resend its completed sibling.
+                importedPhotoGroupIDs.contains(group.id)
+                    ? group.files
+                    : group.files.filter { completedFileURLs.contains($0.url) == false }
+            }
     }
     var selectedByteCount: Int64 { selectedFiles.reduce(0) { $0 + $1.byteCount } }
     var failedTransferCount: Int { transferSummary?.failures.count ?? 0 }
     var canRetryFailed: Bool { failedTransferCount > 0 && isBusy == false }
 
-    init() {
+    convenience init() {
         #if DEBUG
         let fixture = DebugFixture.fromLaunchArguments()
-        defaults = fixture?.defaults ?? .standard
-        importHistory = ImportHistoryStore(directoryURL: fixture?.historyDirectoryURL)
-        fixtureTransferDelay = fixture?.transferDelay
+        self.init(
+            defaults: fixture?.defaults ?? .standard,
+            historyDirectoryURL: fixture?.historyDirectoryURL,
+            sourceURL: fixture?.sourceURL,
+            nefDestinationURL: fixture?.nefDestinationURL,
+            jpegDestinationURL: fixture?.jpegDestinationURL,
+            backupDestinationURL: fixture?.backupDestinationURL,
+            restoreBookmarks: fixture == nil,
+            transferDelay: fixture?.transferDelay
+        )
         #else
-        defaults = .standard
-        importHistory = ImportHistoryStore()
+        self.init(defaults: .standard, historyDirectoryURL: nil, restoreBookmarks: true)
+        #endif
+    }
+
+    init(
+        defaults: UserDefaults,
+        historyDirectoryURL: URL?,
+        sourceURL: URL? = nil,
+        nefDestinationURL: URL? = nil,
+        jpegDestinationURL: URL? = nil,
+        backupDestinationURL: URL? = nil,
+        restoreBookmarks: Bool = false,
+        transferDelay: Duration? = nil
+    ) {
+        self.defaults = defaults
+        importHistory = ImportHistoryStore(directoryURL: historyDirectoryURL)
+        #if DEBUG
+        fixtureTransferDelay = transferDelay
         #endif
         deleteOriginals = defaults.bool(forKey: DefaultsKey.deleteOriginals)
         verifyCopies = defaults.object(forKey: DefaultsKey.verifyCopies) as? Bool ?? true
@@ -151,18 +182,17 @@ final class AppModel {
             .flatMap(OtherFilePolicy.init(rawValue:)) ?? .jpegDestination
         ejectAfterTransfer = defaults.bool(forKey: DefaultsKey.ejectAfterTransfer)
         newFilesOnly = defaults.object(forKey: DefaultsKey.newFilesOnly) as? Bool ?? true
-        sourceGrant = FolderAccessStore.restore(key: DefaultsKey.sourceBookmark)
-        nefDestinationGrant = FolderAccessStore.restore(key: DefaultsKey.nefDestinationBookmark)
-        jpegDestinationGrant = FolderAccessStore.restore(key: DefaultsKey.jpegDestinationBookmark)
-        backupDestinationGrant = FolderAccessStore.restore(key: DefaultsKey.backupDestinationBookmark)
-        #if DEBUG
-        if let fixture {
-            sourceGrant = FolderGrant(url: fixture.sourceURL)
-            nefDestinationGrant = FolderGrant(url: fixture.nefDestinationURL)
-            jpegDestinationGrant = FolderGrant(url: fixture.jpegDestinationURL)
-            backupDestinationGrant = fixture.backupDestinationURL.map(FolderGrant.init(url:))
+        if restoreBookmarks {
+            sourceGrant = FolderAccessStore.restore(key: DefaultsKey.sourceBookmark)
+            nefDestinationGrant = FolderAccessStore.restore(key: DefaultsKey.nefDestinationBookmark)
+            jpegDestinationGrant = FolderAccessStore.restore(key: DefaultsKey.jpegDestinationBookmark)
+            backupDestinationGrant = FolderAccessStore.restore(key: DefaultsKey.backupDestinationBookmark)
+        } else {
+            sourceGrant = sourceURL.map(FolderGrant.init(url:))
+            nefDestinationGrant = nefDestinationURL.map(FolderGrant.init(url:))
+            jpegDestinationGrant = jpegDestinationURL.map(FolderGrant.init(url:))
+            backupDestinationGrant = backupDestinationURL.map(FolderGrant.init(url:))
         }
-        #endif
         if deleteOriginals || backupEnabled { verifyCopies = true }
         refreshVolumes()
     }
@@ -233,6 +263,7 @@ final class AppModel {
             scanResult = result
             photoGroups = groups
             importedPhotoGroupIDs = []
+            completedFileURLs = []
             alreadyImportedCount = scanned.files.count - files.count
             let groupIDs = Set(groups.map(\.id))
             selectedPhotoGroupIDs = if preservingSelection {
@@ -335,9 +366,9 @@ final class AppModel {
                 false
             }
         }
-        let importedURLs = Set(importedFiles.map(\.url))
+        completedFileURLs.formUnion(importedFiles.map(\.url))
         let importedGroups = photoGroups
-            .filter { group in group.files.allSatisfy { importedURLs.contains($0.url) } }
+            .filter { group in group.files.allSatisfy { completedFileURLs.contains($0.url) } }
             .map(\.id)
         importedPhotoGroupIDs.formUnion(importedGroups)
         selectedPhotoGroupIDs.subtract(importedGroups)
@@ -446,6 +477,7 @@ final class AppModel {
         photoGroups = []
         selectedPhotoGroupIDs = []
         importedPhotoGroupIDs = []
+        completedFileURLs = []
         alreadyImportedCount = 0
     }
 
